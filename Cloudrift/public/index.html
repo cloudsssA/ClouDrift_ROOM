@@ -1,0 +1,2752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>线上陪伴读书室</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        :root {
+            --page-bg: #1a1918;
+            --card-bg-rgba: rgba(42, 40, 38, 0.72);
+            --card-bg-solid: #2a2826;
+            --accent: #d97706;
+            --accent-glow: rgba(217, 119, 6, 0.36);
+            --timer-color: #fef3c7;
+            --text-on-page: #f5f5f4;
+            --text-muted-on-page: #a8a29e;
+            --text-on-card: #f5f5f4;
+            --text-muted-on-card: #a8a29e;
+            --card-border: rgba(255, 255, 255, 0.12);
+            --card-subtle: rgba(255, 255, 255, 0.06);
+            --card-subtle-hover: rgba(255, 255, 255, 0.14);
+            --card-input-bg: rgba(0, 0, 0, 0.25);
+            --text-on-accent: #ffffff;
+            --toast-color: #fbbf24;
+            --side-col-w: clamp(244px, 22vw, 292px);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(168, 162, 158, 0.28); border-radius: 999px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(168, 162, 158, 0.5); }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--page-bg);
+            color: var(--text-on-page);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: clamp(10px, 1.6vh, 18px) clamp(14px, 2vw, 24px) clamp(12px, 1.8vh, 20px);
+            gap: clamp(10px, 1.4vh, 16px);
+            overflow: hidden;
+            position: relative;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        body.solo-mode .ai-only { display: none !important; }
+
+        /* 🖼️ 双模式自定义壁纸层 */
+        .room-bg-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; display: none; }
+        .room-bg-layer.active { display: block; }
+        .room-bg-backdrop {
+            position: absolute; inset: -32px; width: calc(100% + 64px); height: calc(100% + 64px);
+            object-fit: cover; filter: blur(28px) saturate(1.22); transform: scale(1.06); display: none;
+        }
+        .room-bg-layer.mode-blur .room-bg-backdrop { display: block; }
+        .room-bg-main { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; transition: filter 0.2s ease; }
+        .room-bg-layer.mode-blur .room-bg-main {
+            object-fit: contain;
+            -webkit-mask-image: radial-gradient(ellipse 84% 84% at 50% 50%, #000 62%, transparent 100%);
+            mask-image: radial-gradient(ellipse 84% 84% at 50% 50%, #000 62%, transparent 100%);
+        }
+        .room-bg-overlay { position: absolute; inset: 0; background: rgba(15, 14, 13, 0.32); transition: background 0.2s ease; }
+        .ambient-light {
+            position: fixed; top: -100px; left: 50%; transform: translateX(-50%);
+            width: 650px; height: 420px;
+            background: radial-gradient(circle, rgba(253, 230, 138, 0.08) 0%, transparent 70%);
+            pointer-events: none; z-index: 0;
+        }
+
+        /* 顶部流式导航栏 */
+        .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; z-index: 30; flex-shrink: 0; }
+        .top-bar-left, .top-bar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .mode-pill {
+            font-size: 12px; padding: 6px 13px; border-radius: 999px;
+            background: var(--card-bg-rgba); border: 1px solid var(--card-border);
+            color: var(--text-on-card); backdrop-filter: blur(12px);
+            display: inline-flex; align-items: center; gap: 7px; font-weight: 500;
+            cursor: pointer; user-select: none; transition: all 0.2s;
+        }
+        .mode-pill:hover { border-color: var(--accent); transform: translateY(-1px); }
+        .mode-pill .mode-switch-hint { font-size: 10.5px; opacity: 0.65; margin-left: 2px; }
+        .mini-avatar-dot {
+            width: 19px; height: 19px; border-radius: 50%; object-fit: cover;
+            background: var(--accent); color: var(--text-on-accent); font-size: 10px;
+            display: inline-flex; align-items: center; justify-content: center; overflow: hidden;
+        }
+        .icon-btn {
+            background: var(--card-bg-rgba); border: 1px solid var(--card-border);
+            color: var(--text-on-card); padding: 6px 13px; border-radius: 999px; font-size: 12px;
+            font-weight: 500; cursor: pointer; backdrop-filter: blur(12px); transition: all 0.2s; position: relative;
+        }
+        .icon-btn:hover { background: var(--card-subtle-hover); transform: translateY(-1px); }
+        .icon-btn-blue { background: #0a84ff; border: 1px solid rgba(10, 132, 255, 0.6); color: #fff; }
+        .icon-btn-blue:hover { background: #2997ff; }
+        .unread-dot {
+            position: absolute; top: -2px; right: -2px; width: 9px; height: 9px;
+            border-radius: 50%; background: #ef4444; display: none; box-shadow: 0 0 8px #ef4444;
+        }
+        .unread-dot.show { display: block; }
+
+        /* 通讯悬浮通知横幅 —— 正上方居中弹出 */
+        .comm-toast-banner {
+            position: fixed; top: 16px; left: 50%; width: 400px; max-width: calc(100vw - 28px);
+            background: rgba(28, 28, 32, 0.94); backdrop-filter: blur(22px);
+            border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 18px;
+            padding: 13px 16px; box-shadow: 0 18px 44px rgba(0, 0, 0, 0.56), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+            display: flex; align-items: center; gap: 12px; cursor: pointer;
+            z-index: 260; opacity: 0; transform: translate(-50%, -26px) scale(0.95);
+            pointer-events: none; transition: all 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .comm-toast-banner.show { opacity: 1; transform: translate(-50%, 0) scale(1); pointer-events: auto; }
+        .toast-ava {
+            width: 38px; height: 38px; border-radius: 50%; background: var(--accent);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px; font-weight: 600; color: var(--text-on-accent); overflow: hidden; flex-shrink: 0;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+        }
+        .toast-ava img { width: 100%; height: 100%; object-fit: cover; }
+        .toast-body { flex: 1; min-width: 0; }
+        .toast-title { font-size: 12px; color: #93c5fd; font-weight: 600; margin-bottom: 3px; }
+        .toast-text { font-size: 13.5px; color: #f5f5f7; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+        /* 主工作区 */
+        .workspace {
+            flex: 1; display: grid;
+            grid-template-columns: var(--side-col-w) minmax(250px, 1fr) var(--side-col-w);
+            gap: clamp(12px, 1.6vw, 20px);
+            min-height: 0; z-index: 1; position: relative; align-items: stretch;
+        }
+        .workspace.reader-open { grid-template-columns: minmax(0, 1fr) var(--side-col-w); }
+        .glass-card {
+            background: var(--card-bg-rgba); backdrop-filter: blur(16px);
+            border: 1px solid var(--card-border); border-radius: 18px; padding: clamp(12px, 1.4vw, 18px);
+            color: var(--text-on-card); transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* 左侧书桌小组件列 */
+        .left-desk-column { width: 100%; height: 100%; display: flex; flex-direction: column; gap: clamp(10px, 1.2vh, 14px); min-height: 0; }
+        #deskWidgetsMount { flex: 1; display: flex; flex-direction: column; gap: clamp(10px, 1.2vh, 14px); min-height: 0; }
+        .desk-card-title { font-size: 12px; color: var(--text-muted-on-card); display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 500; }
+        .desk-date-tag { font-size: 11px; opacity: 0.8; }
+        .desk-stat-card { padding: clamp(11px, 1.3vh, 15px) 16px; flex-shrink: 0; }
+        .desk-stat-grid { display: flex; align-items: center; justify-content: space-around; }
+        .desk-stat-item { text-align: center; }
+        .desk-stat-num { font-size: clamp(21px, 2vw, 26px); font-weight: 700; color: var(--text-on-card); font-variant-numeric: tabular-nums; }
+        .desk-stat-unit { font-size: 12px; font-weight: 400; color: var(--text-muted-on-card); margin-left: 2px; }
+        .desk-stat-label { font-size: 11px; color: var(--text-muted-on-card); margin-top: 2px; }
+        .desk-stat-divider { width: 1px; height: 28px; background: var(--card-border); }
+        .desk-mood-card { padding: clamp(11px, 1.2vh, 14px) 14px; flex-shrink: 0; }
+        .desk-mood-chips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+        .desk-mood-chip {
+            background: var(--card-subtle); border: 1px solid var(--card-border);
+            color: var(--text-on-card); padding: 6px 6px; border-radius: 10px; font-size: 11.5px;
+            cursor: pointer; transition: all 0.2s; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .desk-mood-chip:hover { background: var(--card-subtle-hover); }
+        .desk-mood-chip.active { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); font-weight: 600; }
+        .desk-todo-card { flex: 1; min-height: 110px; padding: clamp(11px, 1.3vh, 15px) 14px; display: flex; flex-direction: column; overflow: hidden; }
+        .desk-todo-input-row { display: flex; gap: 6px; margin-bottom: 8px; }
+        .desk-todo-input {
+            flex: 1; background: var(--card-input-bg); border: 1px solid var(--card-border);
+            color: var(--text-on-card); padding: 6px 9px; border-radius: 8px; font-size: 12px; outline: none; min-width: 0;
+        }
+        .desk-todo-input::placeholder { color: var(--text-muted-on-card); }
+        .desk-todo-input:focus { border-color: var(--accent); }
+        .desk-todo-add-btn { width: 28px; border-radius: 8px; border: none; background: var(--accent); color: var(--text-on-accent); font-size: 15px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
+        .desk-todo-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+        .desk-todo-empty { font-size: 11.5px; color: var(--text-muted-on-card); text-align: center; margin-top: 12px; line-height: 1.5; }
+        .desk-todo-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; border-radius: 8px; background: var(--card-subtle); font-size: 12px; color: var(--text-on-card); }
+        .desk-todo-item.done span { text-decoration: line-through; opacity: 0.48; }
+        .desk-todo-check { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; min-width: 0; }
+        .desk-todo-check span { word-break: break-word; }
+        .desk-todo-del { background: none; border: none; color: var(--text-muted-on-card); cursor: pointer; font-size: 14px; padding: 0 3px; }
+        .desk-todo-del:hover { color: #ef4444; }
+        .book-widget {
+            background: var(--card-bg-rgba); backdrop-filter: blur(14px);
+            border: 1px solid var(--card-border); padding: 11px 14px; border-radius: 16px;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            cursor: pointer; transition: all 0.25s; color: var(--text-on-card); flex-shrink: 0;
+        }
+        .book-widget:hover { border-color: var(--accent); transform: translateY(-2px); }
+
+        /* 沉浸分页阅读器 */
+        .reader-container {
+            display: none; width: 100%; height: 100%; min-width: 0; min-height: 0; border-radius: 18px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.35); overflow: hidden; animation: fadeInReader 0.28s ease;
+        }
+        @keyframes fadeInReader { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .workspace.reader-open .left-desk-column,
+        .workspace.reader-open .focus-dashboard { display: none; }
+        .workspace.reader-open .reader-container { display: flex; }
+
+        /* 4套真实触感纸纹 */
+        .paper-texture {
+            --paper-bg: #f5f0e4; --paper-text: #38332c; --paper-muted: #78716c;
+            --paper-border: rgba(68, 64, 60, 0.16); --paper-card: rgba(255, 255, 255, 0.78);
+            --paper-btn-bg: rgba(68, 64, 60, 0.085);
+            background-color: var(--paper-bg);
+            background-image:
+                radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.45) 0%, transparent 70%),
+                linear-gradient(90deg, rgba(60, 48, 34, 0.07) 0%, transparent 3.5%, transparent 96.5%, rgba(60, 48, 34, 0.06) 100%),
+                repeating-linear-gradient(0deg, rgba(90, 75, 55, 0.028) 0px, rgba(90, 75, 55, 0.028) 1px, transparent 1px, transparent 4px),
+                url("data:image/svg+xml,%3Csvg width='140' height='140' viewBox='0 0 140 140' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='paperGrain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0.25'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23paperGrain)' opacity='0.15'/%3E%3C/svg%3E");
+            box-shadow: inset 0 0 42px rgba(92, 74, 50, 0.11);
+            width: 100%; height: 100%; padding: clamp(16px, 2vw, 24px) clamp(18px, 2.4vw, 30px); display: flex; flex-direction: column;
+            border-radius: 18px; color: var(--paper-text); transition: background-color 0.3s, color 0.3s; min-height: 0;
+        }
+        .paper-texture.theme-sage {
+            --paper-bg: #e1ede0; --paper-text: #243628; --paper-muted: #526957;
+            --paper-border: rgba(39, 56, 43, 0.16); --paper-card: rgba(255, 255, 255, 0.70); --paper-btn-bg: rgba(39, 56, 43, 0.085);
+            box-shadow: inset 0 0 42px rgba(45, 75, 50, 0.10);
+        }
+        .paper-texture.theme-mist {
+            --paper-bg: #e7eff6; --paper-text: #253440; --paper-muted: #56697a;
+            --paper-border: rgba(40, 54, 66, 0.15); --paper-card: rgba(255, 255, 255, 0.78); --paper-btn-bg: rgba(40, 54, 66, 0.085);
+            box-shadow: inset 0 0 42px rgba(45, 70, 95, 0.10);
+        }
+        .paper-texture.theme-night {
+            --paper-bg: #1c1d20; --paper-text: #cbc7bf; --paper-muted: #8a867f;
+            --paper-border: rgba(255, 255, 255, 0.11); --paper-card: rgba(255, 255, 255, 0.06); --paper-btn-bg: rgba(255, 255, 255, 0.085);
+            box-shadow: inset 0 0 42px rgba(0, 0, 0, 0.35);
+        }
+
+        .reader-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 12px; border-bottom: 1px solid var(--paper-border); padding-bottom: 10px; gap: 8px; flex-shrink: 0; }
+        .reader-title-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .reader-header h2 { font-size: 16.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 195px; }
+        .reader-mini-timer { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 3px 9px; border-radius: 999px; background: var(--paper-btn-bg); color: var(--paper-text); cursor: pointer; user-select: none; }
+        .reader-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .paper-theme-dots { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; background: var(--paper-btn-bg); }
+        .theme-dot { width: 14px; height: 14px; border-radius: 50%; cursor: pointer; border: 1.5px solid rgba(128,128,128,0.45); transition: transform 0.15s; }
+        .theme-dot:hover { transform: scale(1.2); }
+        .theme-dot.active { box-shadow: 0 0 0 2px var(--accent); transform: scale(1.12); }
+        .font-size-controls { display: inline-flex; align-items: center; gap: 2px; padding: 2px 5px; border-radius: 8px; background: var(--paper-btn-bg); border: 1px solid var(--paper-border); font-size: 11px; }
+        .font-size-controls button { background: none; border: none; color: var(--paper-text); cursor: pointer; padding: 2px 5px; font-weight: 600; font-size: 11.5px; border-radius: 4px; }
+        .font-size-controls button:hover { background: rgba(128,128,128,0.18); }
+        .paper-btn { background: var(--paper-btn-bg); border: 1px solid var(--paper-border); color: var(--paper-text); padding: 4px 9px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+        .paper-btn:hover { filter: brightness(0.95); }
+        .btn-close-reader { background: var(--paper-btn-bg); border: none; font-size: 12.5px; cursor: pointer; color: var(--paper-text); padding: 5px 10px; border-radius: 8px; font-weight: 500; }
+
+        .reader-body { flex: 1; display: flex; gap: 18px; overflow: hidden; min-height: 0; }
+        .reader-page-col { flex: 1.55; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+        .reader-content { flex: 1; overflow-y: auto; line-height: 1.95; font-size: 16.5px; text-align: justify; padding-right: 10px; user-select: text; -webkit-user-select: text; min-height: 0; }
+        .reader-content p { margin-bottom: 15px; text-indent: 2em; }
+        .reader-content::selection, .reader-content p::selection { background: rgba(217, 119, 6, 0.28); }
+
+        .book-mark {
+            background: rgba(250, 204, 21, 0.34); color: inherit; padding: 1px 2px; border-radius: 4px;
+            border-bottom: 1.5px solid rgba(217, 119, 6, 0.55); cursor: pointer; transition: background 0.25s;
+        }
+        .book-mark.private { background: rgba(56, 189, 248, 0.22); border-bottom: 1.5px dashed rgba(2, 132, 199, 0.55); }
+        .paper-texture.theme-night .book-mark { background: rgba(250, 204, 21, 0.22); }
+        .paper-texture.theme-night .book-mark.private { background: rgba(56, 189, 248, 0.2); }
+        .book-mark.pulse { animation: markPulse 1.4s ease; }
+        @keyframes markPulse {
+            0%, 100% { box-shadow: none; }
+            30%, 70% { background: rgba(245, 158, 11, 0.65); box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.32); }
+        }
+
+        .reader-pagination {
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            padding-top: 10px; margin-top: 8px; border-top: 1px solid var(--paper-border);
+            flex-shrink: 0; font-size: 12px; color: var(--paper-muted);
+        }
+        .page-nav-btn {
+            background: var(--paper-btn-bg); border: 1px solid var(--paper-border); color: var(--paper-text);
+            padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s;
+        }
+        .page-nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+        .page-nav-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+        .page-indicator { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+        .page-jump-input {
+            width: 44px; padding: 2px 5px; text-align: center; border-radius: 6px;
+            border: 1px solid var(--paper-border); background: var(--paper-card); color: var(--paper-text); font-size: 12px;
+        }
+
+        .margin-notes-col { flex: 0.95; border-left: 1px dashed var(--paper-border); padding-left: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+        .margin-col-title { font-size: 12px; color: var(--paper-muted); display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-shrink: 0; }
+        .peek-btn { background: var(--paper-btn-bg); border: 1px solid var(--paper-border); color: var(--paper-text); font-size: 11.5px; padding: 4px 9px; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+        .peek-btn:hover:not(:disabled) { border-color: var(--accent); }
+        .margin-card {
+            background: var(--paper-card); border-radius: 11px; padding: 11px 26px 11px 12px;
+            border: 1px solid var(--paper-border); font-size: 13px; position: relative; transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .margin-card.active-focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.22); }
+        .margin-del-btn { position: absolute; top: 8px; right: 8px; background: none; border: none; color: var(--paper-muted); font-size: 12px; cursor: pointer; padding: 2px 6px; border-radius: 4px; opacity: 0.7; }
+        .margin-del-btn:hover { color: #dc2626; opacity: 1; }
+        .margin-quote { color: var(--paper-muted); font-style: italic; border-left: 2.5px solid var(--accent); padding-left: 8px; margin-bottom: 7px; font-size: 12px; line-height: 1.5; cursor: pointer; }
+        .margin-quote:hover { opacity: 0.85; }
+        .margin-user-note { font-size: 12.5px; line-height: 1.55; padding: 6px 8px; border-radius: 7px; background: var(--paper-btn-bg); color: var(--paper-text); margin-bottom: 7px; }
+        .margin-reply { font-family: "Kaiti", "STKaiti", "KaiTi_GB2312", Georgia, serif; font-size: 14.5px; line-height: 1.62; font-weight: 600; }
+        .margin-locked { color: var(--paper-muted); font-size: 12px; }
+        .margin-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+        .margin-tag { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: var(--paper-btn-bg); color: var(--paper-muted); }
+        .margin-mini-act { background: none; border: 1px solid var(--paper-border); color: var(--paper-text); font-size: 11px; padding: 2px 8px; border-radius: 6px; cursor: pointer; }
+        .margin-mini-act:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* 划词 4 模式浮条 */
+        .selection-popover {
+            position: fixed; display: none; z-index: 180;
+            background: rgba(30, 28, 26, 0.96); backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.2); padding: 5px; border-radius: 999px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.52); transform: translate(-50%, -118%);
+            gap: 4px; align-items: center; white-space: nowrap;
+        }
+        .selection-popover.show { display: inline-flex; }
+        .sel-act-btn { background: transparent; border: none; color: #f5f5f4; padding: 6px 11px; border-radius: 999px; font-size: 12px; font-weight: 500; cursor: pointer; transition: background 0.18s; }
+        .sel-act-btn:hover { background: rgba(255,255,255,0.14); }
+        .sel-act-btn.primary { background: var(--accent); color: var(--text-on-accent); }
+        .sel-act-btn.primary:hover { filter: brightness(1.08); }
+
+        /* 中央专注主控台 */
+        .focus-dashboard {
+            width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;
+            position: relative; gap: clamp(4px, 0.8vh, 8px); min-width: 0; min-height: 0; padding-bottom: clamp(4px, 1.5vh, 14px);
+        }
+        .timer-label { color: var(--text-muted-on-page); font-size: 12px; letter-spacing: 3px; text-transform: uppercase; font-weight: 500; text-shadow: 0 1px 8px rgba(0,0,0,0.35); }
+        .timer-display {
+            font-family: "DIN Alternate", "SF Pro Display", "Bahnschrift", "Segoe UI", ui-rounded, sans-serif;
+            font-size: clamp(60px, 7.6vw, 106px); font-weight: 700; color: var(--timer-color); letter-spacing: 3px;
+            text-shadow: 0 6px 28px rgba(0, 0, 0, 0.38); font-variant-numeric: tabular-nums; line-height: 1.04; transition: color 0.25s;
+        }
+        .pause-warning-bar { display: none; font-size: 12px; color: var(--text-on-card); background: var(--card-bg-rgba); border: 1px solid var(--accent); padding: 4px 12px; border-radius: 999px; margin-top: 2px; font-variant-numeric: tabular-nums; backdrop-filter: blur(10px); }
+        .pause-warning-bar.show { display: inline-block; }
+        .duration-pills { display: flex; align-items: center; gap: 3px; margin-top: 6px; padding: 4px; background: var(--card-bg-rgba); border: 1px solid var(--card-border); border-radius: 999px; backdrop-filter: blur(10px); transition: opacity 0.3s; max-width: 100%; flex-wrap: wrap; justify-content: center; }
+        .duration-pills.locked { opacity: 0.4; cursor: not-allowed; }
+        .duration-pills.locked .dur-pill { pointer-events: none; }
+        .dur-pill { background: transparent; border: none; color: var(--text-muted-on-card); padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .dur-pill:hover { color: var(--text-on-card); }
+        .dur-pill.active { background: var(--accent); color: var(--text-on-accent); font-weight: 600; }
+        .btn-group { display: flex; gap: 10px; margin-top: clamp(8px, 1.3vh, 14px); flex-wrap: wrap; justify-content: center; }
+        .btn { padding: clamp(9px, 1.2vh, 12px) clamp(20px, 2.2vw, 28px); border-radius: 100px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.25s ease; white-space: nowrap; }
+        .btn-primary { background: var(--accent); color: var(--text-on-accent); box-shadow: 0 6px 22px var(--accent-glow); }
+        .btn-primary:hover { filter: brightness(1.08); transform: translateY(-2px); }
+        .btn-secondary { background: var(--card-bg-rgba); color: var(--text-on-card); border: 1px solid var(--card-border); backdrop-filter: blur(10px); }
+        .btn-secondary:hover { background: var(--card-subtle-hover); }
+        .btn-danger { background: #dc2626; color: #fff; }
+        .btn-danger:hover { background: #ef4444; }
+
+        /* 桌面相框小组件 */
+        .ios-widget {
+            margin-top: clamp(10px, 1.8vh, 18px); width: clamp(220px, 21vw, 276px); height: clamp(118px, 18vh, 168px); border-radius: 22px;
+            background: var(--card-bg-rgba); backdrop-filter: blur(14px);
+            border: 1px solid var(--card-border); box-shadow: 0 14px 32px rgba(0, 0, 0, 0.25);
+            position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; cursor: pointer; flex-shrink: 1;
+        }
+        .ios-widget:hover { transform: translateY(-2px); border-color: var(--accent); }
+        .ios-widget img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.5s ease; }
+        .ios-widget:hover img { transform: scale(1.03); }
+        .widget-overlay-top { position: absolute; top: 9px; left: 9px; right: 9px; display: flex; justify-content: space-between; align-items: center; gap: 5px; opacity: 0; transition: opacity 0.25s; z-index: 5; }
+        .ios-widget:hover .widget-overlay-top { opacity: 1; }
+        .widget-chip-btn { background: rgba(24, 22, 20, 0.82); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.22); color: #f5f5f4; padding: 3px 9px; border-radius: 999px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+        .widget-chip-btn.vis-on { border-color: #4ade80; color: #bbf7d0; }
+        .widget-caption-bar { position: absolute; bottom: 0; left: 0; right: 0; padding: 22px 14px 10px; background: linear-gradient(to top, rgba(0,0,0,0.72) 0%, transparent 100%); display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none; gap: 6px; }
+        .widget-caption-text { font-size: 12px; color: rgba(255, 255, 255, 0.94); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 175px; }
+        .widget-dots { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+        .widget-dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255, 255, 255, 0.38); }
+        .widget-dot.active { background: #fef3c7; transform: scale(1.25); }
+        .widget-empty-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: var(--text-muted-on-card); font-size: 12px; text-align: center; padding: 12px; }
+
+        /* 右侧面板：双向便利贴墙 + 留声机 */
+        .right-panel { width: 100%; height: 100%; display: flex; flex-direction: column; gap: clamp(10px, 1.4vh, 16px); min-height: 0; }
+        .note-board { flex: 1; min-height: 165px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; padding-top: 38px; }
+        .note-board-header { position: absolute; top: 12px; left: 14px; right: 14px; display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted-on-card); }
+        .note-board-header > span { white-space: nowrap; flex-shrink: 0; font-weight: 500; }
+        .note-header-actions { display: flex; align-items: center; gap: 4px; }
+        .sticky-note {
+            background: #fef08a; color: #3f3a34; padding: 14px 16px 12px; border-radius: 6px; box-shadow: 2px 6px 18px rgba(0,0,0,0.28);
+            transform: rotate(-1.5deg) scale(0.94); opacity: 0; transition: all 0.32s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            width: 92%; font-size: 13px; line-height: 1.56; display: none; word-break: break-word;
+        }
+        .sticky-note.show { display: block; opacity: 1; transform: rotate(1deg) scale(1); }
+        .sticky-note.from-user { transform: rotate(-1.2deg) scale(1); }
+        .sticky-note .author { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 11.5px; opacity: 0.86; margin-top: 10px; padding-top: 7px; border-top: 1px dashed rgba(128,128,128,0.28); flex-wrap: wrap; }
+        .note-pager { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+        .note-pager button { background: rgba(128,128,128,0.18); border: none; color: inherit; width: 20px; height: 20px; border-radius: 50%; cursor: pointer; font-size: 11px; line-height: 1; }
+        .note-pager button:hover { background: rgba(128,128,128,0.32); }
+        .tear-btn { background: none; border: none; color: inherit; cursor: pointer; font-size: 11.5px; text-decoration: underline; }
+        .note-share-btn { background: rgba(128,128,128,0.18); border: none; color: inherit; cursor: pointer; font-size: 11px; padding: 2px 7px; border-radius: 999px; font-weight: 500; }
+        .note-share-btn:hover { background: rgba(128,128,128,0.32); }
+
+        .vinyl-card { min-height: 190px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 8px; position: relative; }
+        .vinyl-top-bar { width: 100%; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted-on-card); gap: 6px; }
+        .vinyl-disc {
+            width: clamp(72px, 8vh, 92px); height: clamp(72px, 8vh, 92px); background: radial-gradient(circle, #262626 0%, #0a0a0a 70%);
+            border-radius: 50%; display: flex; justify-content: center; align-items: center;
+            box-shadow: 0 0 20px rgba(0,0,0,0.55); border: 4px solid #292524;
+            animation: spin-slow 5s linear infinite; animation-play-state: paused; cursor: pointer;
+        }
+        .vinyl-disc.playing { animation-play-state: running; }
+        .vinyl-disc::after { content: ''; width: 24px; height: 24px; background: var(--accent); border-radius: 50%; border: 3px solid #1c1917; }
+        .music-controls { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 6px; }
+        .music-title { font-size: 12.5px; color: var(--text-on-card); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; font-weight: 500; }
+        .mini-btn { background: var(--card-subtle); border: 1px solid var(--card-border); color: var(--text-on-card); padding: 4px 8px; border-radius: 8px; cursor: pointer; font-size: 11.5px; white-space: nowrap; }
+        .mini-btn:hover { background: var(--card-subtle-hover); }
+        .ai-toast { font-size: 11.5px; color: var(--toast-color); text-align: center; min-height: 16px; line-height: 1.4; width: 100%; word-break: break-word; font-weight: 500; }
+
+        @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes reject-blink {
+            0%, 100% { transform: translateX(0); }
+            25% { background: #dc2626; border-color: #ef4444; color: #fff; transform: translateX(-4px); }
+            75% { background: #dc2626; border-color: #ef4444; color: #fff; transform: translateX(4px); }
+        }
+        .rejected { animation: reject-blink 0.35s ease-in-out 3; }
+
+        @media (max-height: 750px) and (min-width: 1021px) {
+            body { height: auto; min-height: 100vh; overflow-y: auto; }
+            .workspace { min-height: 620px; }
+            .reader-container { height: 78vh; min-height: 500px; }
+        }
+        @media (max-width: 1020px) {
+            body { height: auto; min-height: 100vh; overflow-y: auto; padding: 14px; }
+            .workspace, .workspace.reader-open { display: flex; flex-direction: column; overflow: visible; gap: 14px; }
+            .left-desk-column, #deskWidgetsMount { display: contents; }
+            .desk-stat-card { order: 1; width: 100%; }
+            .focus-dashboard { order: 2; width: 100%; height: auto; padding: 10px 0 6px; }
+            .timer-display { font-size: 74px; }
+            .book-widget { order: 3; width: 100%; }
+            .reader-container { order: 3; width: 100%; height: auto; }
+            .paper-texture { height: auto; }
+            .reader-body { overflow: visible; align-items: stretch; }
+            .reader-page-col { min-height: 360px; max-height: 68vh; }
+            .margin-notes-col { max-height: 68vh; }
+            .right-panel { order: 4; width: 100%; height: auto; }
+            .desk-mood-card { order: 5; width: 100%; }
+            .desk-todo-card { order: 6; width: 100%; flex: none; min-height: 165px; }
+            .workspace.reader-open .left-desk-column { display: contents; }
+            .workspace.reader-open .focus-dashboard { display: flex; }
+            .workspace.reader-open .book-widget { display: none; }
+            .workspace.reader-open .reader-container { display: flex; order: 3; }
+            .workspace.reader-open .right-panel { order: 4; }
+        }
+        @media (max-width: 768px) {
+            .top-bar { justify-content: center; }
+            .timer-display { font-size: 62px; }
+            .paper-texture { padding: 16px; }
+            .reader-body { flex-direction: column; }
+            .reader-page-col { max-height: 56vh; }
+            .margin-notes-col { border-left: none; border-top: 1px dashed var(--paper-border); padding-left: 0; padding-top: 12px; max-height: 36vh; }
+            .ios-widget { width: 100%; max-width: 320px; height: 156px; }
+            .widget-overlay-top { opacity: 1; }
+            .comm-drawer { width: calc(100vw - 24px) !important; right: 12px !important; bottom: 12px !important; height: 74vh !important; }
+            .selection-popover {
+                top: auto !important; bottom: 18px !important; left: 50% !important;
+                transform: translateX(-50%) !important;
+                width: calc(100vw - 24px); max-width: 420px;
+                justify-content: space-around; border-radius: 18px; padding: 8px 6px;
+                box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65);
+            }
+            .sel-act-btn { padding: 8px 10px; font-size: 12.5px; }
+        }
+
+        /* ✉️ 通讯抽屉 */
+        .comm-drawer {
+            position: fixed; bottom: 24px; right: 24px; width: 385px; height: 550px;
+            background: rgba(24, 24, 26, 0.96); backdrop-filter: blur(22px);
+            border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 24px;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72);
+            display: flex; flex-direction: column; overflow: hidden; z-index: 140;
+            opacity: 0; transform: translateY(24px) scale(0.95); pointer-events: none;
+            transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1); color: #f5f5f7;
+        }
+        .comm-drawer.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+        .im-header { padding: 14px 18px; background: rgba(36, 36, 39, 0.85); border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; align-items: center; }
+        .im-contact { display: flex; align-items: center; gap: 10px; }
+        .im-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; color: var(--text-on-accent); overflow: hidden; flex-shrink: 0; }
+        .im-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .im-name { font-size: 14px; font-weight: 600; color: #f5f5f7; }
+        .im-sub { font-size: 11px; color: #8e8e93; }
+        .im-actions { display: flex; gap: 8px; }
+        .im-icon-btn { background: none; border: none; color: #8e8e93; font-size: 13px; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+        .im-icon-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+        .im-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .im-bubble-row { display: flex; align-items: flex-end; gap: 8px; width: 100%; }
+        .im-bubble-row.user { justify-content: flex-end; }
+        .im-bubble-row.assistant { justify-content: flex-start; }
+        .bubble-avatar { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; background: #3a3a3c; color: #f5f5f7; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); }
+        .bubble-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .im-bubble { max-width: 75%; padding: 9px 14px; font-size: 14px; line-height: 1.48; word-break: break-word; white-space: pre-wrap; animation: bubblePop 0.22s ease-out; }
+        .im-bubble-row.user .im-bubble { background: #0a84ff; color: #fff; border-radius: 18px 18px 4px 18px; }
+        .im-bubble-row.assistant .im-bubble { background: #2c2c2e; color: #f2f2f7; border-radius: 18px 18px 18px 4px; }
+        .im-bubble-img { max-width: 100%; max-height: 190px; border-radius: 12px; display: block; margin-bottom: 4px; cursor: zoom-in; }
+        .im-bubble-audio { width: 205px; height: 32px; display: block; margin-bottom: 4px; filter: invert(0.92); }
+        .im-typing { font-style: italic; color: #8e8e93; font-size: 13px; }
+        @keyframes bubblePop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .im-attach-preview { display: none; padding: 8px 14px; background: rgba(38, 38, 42, 0.96); border-top: 1px solid rgba(255, 255, 255, 0.08); align-items: center; justify-content: space-between; gap: 10px; }
+        .im-attach-preview.show { display: flex; }
+        .im-attach-thumb { height: 42px; width: 42px; border-radius: 8px; object-fit: cover; border: 1px solid rgba(255,255,255,0.2); }
+        .im-input-bar { padding: 10px 12px; background: rgba(28, 28, 30, 0.94); border-top: 1px solid rgba(255, 255, 255, 0.08); display: flex; align-items: center; gap: 6px; }
+        .im-tool-btn { width: 32px; height: 32px; border-radius: 50%; background: #2c2c2e; border: 1px solid #3a3a3c; color: #e5e5ea; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s; }
+        .im-tool-btn:hover { background: #3a3a3c; }
+        .im-tool-btn.recording { background: #dc2626; border-color: #ef4444; color: #fff; animation: pulseRec 1s infinite; }
+        @keyframes pulseRec { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+        .im-input { flex: 1; background: #1c1c1e; border: 1px solid #3a3a3c; color: #fff; border-radius: 999px; padding: 8px 14px; font-size: 13.5px; outline: none; min-width: 0; }
+        .im-input:focus { border-color: #0a84ff; }
+        .im-send-btn { width: 34px; height: 34px; border-radius: 50%; background: #0a84ff; color: #fff; border: none; font-size: 16px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .im-send-btn:disabled { background: #3a3a3c; cursor: not-allowed; }
+
+        /* 弹窗通用 & 可视化目录列表 */
+        .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 200; }
+        .modal-backdrop.open { display: flex; }
+        .modal-box { background: #22201e; border: 1px solid #3f3b37; border-radius: 18px; width: 92%; max-width: 520px; max-height: 88vh; overflow-y: auto; padding: 24px; color: #f5f5f4; box-shadow: 0 25px 60px rgba(0,0,0,0.7); }
+        .modal-box h3 { font-size: 17px; margin-bottom: 16px; color: #fef3c7; display: flex; justify-content: space-between; align-items: center; }
+        .modal-box .mini-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); color: #f5f5f4; }
+        .modal-box .mini-btn:hover { background: rgba(255,255,255,0.18); }
+        .modal-box .btn-secondary { background: #33302d; color: #e7e5e4; border: none; }
+        .form-group { margin-bottom: 14px; }
+        .form-group label { display: block; font-size: 12px; color: #a8a29e; margin-bottom: 6px; }
+        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 9px 12px; background: #161514; border: 1px solid #3f3b37; color: #f5f5f4; border-radius: 8px; font-size: 13px; font-family: inherit; }
+        .form-group input[type="range"] { padding: 0; border: none; background: transparent; accent-color: var(--accent); }
+        .form-group textarea { resize: vertical; min-height: 76px; }
+        .color-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .inline-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .inline-row input { flex: 1; min-width: 170px; }
+        .status-msg { font-size: 12px; margin-top: 6px; min-height: 18px; line-height: 1.5; word-break: break-word; }
+        .avatar-picker-row { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; background: #181715; padding: 12px; border-radius: 12px; border: 1px solid #33302d; }
+        .avatar-preview { width: 56px; height: 56px; border-radius: 50%; background: #33302d; border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 600; color: #fef3c7; overflow: hidden; flex-shrink: 0; }
+        .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+        .crop-stage-wrap { position: relative; width: 240px; height: 240px; margin: 0 auto 14px; border-radius: 16px; overflow: hidden; background: #111; border: 1px solid #44403c; cursor: grab; user-select: none; touch-action: none; }
+        .crop-stage-wrap:active { cursor: grabbing; }
+        .crop-circle-guide { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 2px rgba(254, 243, 199, 0.85), 0 0 0 999px rgba(0, 0, 0, 0.52); border-radius: 50%; }
+        .preset-bar, .settings-section-box { background: #181715; border: 1px solid #33302d; border-radius: 12px; padding: 13px; margin-bottom: 14px; }
+        .preset-bar-header { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #a8a29e; margin-bottom: 8px; }
+        .preset-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .preset-chip { display: inline-flex; align-items: center; gap: 6px; background: #292524; border: 1px solid #44403c; color: #e7e5e4; padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer; }
+        .preset-chip:hover { border-color: var(--accent); color: #fef3c7; }
+        .preset-chip .chip-ava { width: 16px; height: 16px; border-radius: 50%; object-fit: cover; }
+        .preset-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .preset-chip .del-x { color: #78716c; margin-left: 2px; font-weight: bold; }
+        .preset-chip .del-x:hover { color: #ef4444; }
+        .memory-box-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+        .memory-pill-val { font-size: 12px; font-weight: 600; color: #fef3c7; background: rgba(217, 119, 6, 0.22); border: 1px solid var(--accent); padding: 2px 10px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+        .memory-slider { width: 100%; accent-color: var(--accent); cursor: pointer; margin: 4px 0 8px; }
+        .memory-meta-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: #a8a29e; }
+        .btn-danger-ghost { background: rgba(220, 38, 38, 0.14); border: 1px solid rgba(239, 68, 68, 0.42); color: #fca5a5; padding: 5px 11px; border-radius: 8px; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+        .btn-danger-ghost:hover { background: rgba(220, 38, 38, 0.28); color: #fff; }
+        .quote-preview-box { background: #181715; border-left: 3px solid var(--accent); padding: 10px 12px; border-radius: 8px; font-size: 13px; color: #d6d3d1; line-height: 1.55; margin-bottom: 14px; font-style: italic; }
+
+        /* 📚 书架 / 🎵 歌单 可视化列表卡片 */
+        .catalog-list { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; margin-top: 8px; }
+        .catalog-item {
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            background: #181715; border: 1px solid #33302d; border-radius: 12px; padding: 11px 13px;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .catalog-item:hover { border-color: var(--accent); background: #23201d; }
+        .catalog-item.active { border-color: var(--accent); background: rgba(217, 119, 6, 0.14); }
+        .catalog-info { flex: 1; min-width: 0; }
+        .catalog-title { font-size: 13.5px; font-weight: 600; color: #f5f5f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .catalog-meta { font-size: 11px; color: #a8a29e; margin-top: 3px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .catalog-tag { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(255,255,255,0.08); color: #d6d3d1; }
+        .catalog-tag.cur { background: var(--accent); color: var(--text-on-accent); font-weight: 600; }
+
+        .switch-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; font-size: 12.5px; color: #e7e5e4; }
+        .switch-row + .switch-row { border-top: 1px dashed #33302d; }
+        .switch-row small { display: block; font-size: 11px; color: #a8a29e; margin-top: 2px; }
+        .switch-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+        .quick-rel-toggle { width: 100%; background: none; border: none; color: #e7e5e4; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; font-weight: 500; }
+        .quick-rel-pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; background: #292524; color: #a8a29e; border: 1px solid #44403c; }
+        .quick-rel-pill.on { background: rgba(217, 119, 6, 0.22); color: #fde68a; border-color: var(--accent); }
+        .quick-rel-body { display: none; margin-top: 12px; padding-top: 10px; border-top: 1px dashed #33302d; }
+        .quick-rel-body.open { display: block; }
+        .pwd-wrap, .combo-wrap { position: relative; flex: 1; min-width: 170px; display: flex; align-items: center; }
+        .pwd-wrap input, .combo-wrap input { width: 100%; padding-right: 34px !important; }
+        .pwd-eye-btn, .combo-arrow-btn {
+            position: absolute; right: 6px; background: none; border: none; color: #a8a29e;
+            cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 6px; line-height: 1;
+        }
+        .pwd-eye-btn:hover, .combo-arrow-btn:hover { color: #fef3c7; background: rgba(255,255,255,0.08); }
+        .combo-dropdown {
+            position: absolute; top: calc(100% + 4px); left: 0; right: 0; max-height: 210px; overflow-y: auto;
+            background: #1b1917; border: 1px solid #44403c; border-radius: 10px; padding: 4px;
+            box-shadow: 0 14px 32px rgba(0,0,0,0.65); z-index: 240; display: none;
+        }
+        .combo-dropdown.open { display: block; }
+        .combo-opt {
+            padding: 7px 10px; font-size: 12.5px; color: #e7e5e4; border-radius: 7px; cursor: pointer;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .combo-opt:hover, .combo-opt.selected { background: rgba(217, 119, 6, 0.25); color: #fef3c7; }
+    </style>
+<link rel="stylesheet" href="/pet/pet.css">
+</head>
+<body>
+    <!-- 🖼️ 全屏自定义壁纸层 -->
+    <div class="room-bg-layer" id="roomBgLayer">
+        <img class="room-bg-backdrop" id="roomBgBackdrop" alt="">
+        <img class="room-bg-main" id="roomBgMain" alt="">
+        <div class="room-bg-overlay" id="roomBgOverlay"></div>
+    </div>
+    <div class="ambient-light"></div>
+
+    <!-- 顶部清爽导航栏 -->
+    <div class="top-bar">
+        <div class="top-bar-left">
+            <span class="mode-pill" id="modeBadge" onclick="toggleSoloMode()" title="点击切换【线上陪伴】/【单人专注模式】">🧠 线上连线中</span>
+        </div>
+        <div class="top-bar-right">
+            <button class="icon-btn icon-btn-blue ai-only" onclick="toggleChatDrawer()">✉️ 通讯<span class="unread-dot" id="commUnreadDot"></span></button>
+            <button class="icon-btn ai-only" onclick="openCharacterModal()">🪪 角色卡</button>
+            <button class="icon-btn" onclick="openUserModal()">👤 用户</button>
+            <button class="icon-btn ai-only" onclick="openPromptConfigModal()">🎛️ 配置</button>
+            <button class="icon-btn" onclick="openSettingsModal()">⚙️ 设置</button>
+        </div>
+    </div>
+
+    <!-- 正上方居中弹出的通讯通知条 -->
+    <div class="comm-toast-banner" id="commToastBanner" onclick="openChatFromBanner()">
+        <div class="toast-ava" id="toastAvatar">TA</div>
+        <div class="toast-body">
+            <div class="toast-title" id="toastTitle">✉️ 新通讯消息</div>
+            <div class="toast-text" id="toastText"></div>
+        </div>
+    </div>
+
+    <!-- 划词 4 模式快捷浮条 -->
+    <div class="selection-popover" id="selectionPopover" onmousedown="event.preventDefault()">
+        <button class="sel-act-btn" onclick="submitHighlightDirect(false)">🔖 仅划线</button>
+        <button class="sel-act-btn" onclick="openHighlightNoteModal(false)">📝 记笔记</button>
+        <button class="sel-act-btn ai-only" onclick="submitHighlightDirect(true)">📤 分享给TA</button>
+        <button class="sel-act-btn primary ai-only" onclick="openHighlightNoteModal(true)">💬 带批注分享</button>
+    </div>
+
+    <div class="workspace" id="workspace">
+        <div class="left-desk-column" id="leftDeskColumn">
+            <div id="deskWidgetsMount"></div>
+            <div class="book-widget" id="bookWidget">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">
+                    <span style="font-size:22px;">📖</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:14px;font-weight:600;">翻开共享书页</div>
+                        <div style="font-size:12px;color:var(--text-muted-on-card);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="widgetBookTitle">《夜航西飞》</div>
+                    </div>
+                </div>
+                <button class="mini-btn" onclick="event.stopPropagation();openBookshelfModal()" title="打开书架目录">📚 书架</button>
+            </div>
+        </div>
+
+        <div class="reader-container" id="readerContainer">
+            <div class="paper-texture" id="paperTexture">
+                <div class="reader-header">
+                    <div class="reader-title-wrap">
+                        <h2 id="bookTitle">夜航西飞（试读片段）</h2>
+                        <span class="reader-mini-timer" id="readerMiniTimer" onclick="toggleFocus()" title="点击可暂停/继续专注">🕒 25:00</span>
+                    </div>
+                    <div class="reader-actions">
+                        <div class="paper-theme-dots" title="切换书页纸纹与夜间模式">
+                            <span class="theme-dot active" data-theme="cream" style="background:#f5f0e4;" title="暖米纤维纸" onclick="setPaperTheme('cream')"></span>
+                            <span class="theme-dot" data-theme="sage" style="background:#d9ead7;" title="豆沙护眼纸" onclick="setPaperTheme('sage')"></span>
+                            <span class="theme-dot" data-theme="mist" style="background:#dfe9f3;" title="晴空雾蓝纸" onclick="setPaperTheme('mist')"></span>
+                            <span class="theme-dot" data-theme="night" style="background:#1c1d20;" title="深夜夜间模式" onclick="setPaperTheme('night')"></span>
+                        </div>
+                        <div class="font-size-controls" title="调节正文字体大小">
+                            <button type="button" onclick="changeReaderFontSize(-1)">A-</button>
+                            <span id="readerFontSizeLabel">16.5px</span>
+                            <button type="button" onclick="changeReaderFontSize(1)">A+</button>
+                        </div>
+                        <button class="paper-btn" onclick="openBookshelfModal()">📚 书架</button>
+                        <input type="file" id="bookFileInput" accept=".txt,.md,.pdf" style="display:none" onchange="handleFileImport(event)">
+                        <button class="paper-btn" id="importBookBtn" onclick="document.getElementById('bookFileInput').click()">📂 导入</button>
+                        <button class="paper-btn" onclick="openPasteBookModal()">📋 粘贴</button>
+                        <button class="btn-close-reader" id="closeReader">收起 ✕</button>
+                    </div>
+                </div>
+                <div class="reader-body">
+                    <div class="reader-page-col">
+                        <div class="reader-content" id="readerContent"></div>
+                        <div class="reader-pagination">
+                            <button class="page-nav-btn" id="prevPageBtn" onclick="turnPage(-1)">⬅ 上一页</button>
+                            <div class="page-indicator">
+                                <span>第</span>
+                                <input type="number" class="page-jump-input" id="pageJumpInput" min="1" value="1" onchange="jumpToPageInput(this.value)">
+                                <span>/ <span id="totalPagesSpan">1</span> 页</span>
+                            </div>
+                            <button class="page-nav-btn" id="nextPageBtn" onclick="turnPage(1)">下一页 ➡</button>
+                        </div>
+                    </div>
+                    <div class="margin-notes-col">
+                        <div class="margin-col-title">
+                            <span>✒️ 划线与批注 (<span id="highlightCountBadge">0</span>)</span>
+                            <button class="peek-btn ai-only" id="peekUnlockBtn" onclick="requestPeekOrUnlock()" title="专注期内偷看需经 TA 同意哦～">👀 请求偷看</button>
+                        </div>
+                        <div id="marginNotesList"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="focus-dashboard" id="focusDashboard">
+            <div class="timer-label" id="timerStatusLabel">ONLINE FOCUS · 休闲状态</div>
+            <div class="timer-display" id="timerDisplay">25:00</div>
+            <div class="pause-warning-bar" id="pauseWarningBar">⏸ 45分钟内剩余暂停额度 10:00 · 耗尽将自动放弃</div>
+            <div class="duration-pills" id="durationPills" title="开始专注后锁定，如需更改请先放弃">
+                <button class="dur-pill" data-mins="15" onclick="setFocusMinutes(15, this)">15m</button>
+                <button class="dur-pill active" data-mins="25" onclick="setFocusMinutes(25, this)">25m</button>
+                <button class="dur-pill" data-mins="45" onclick="setFocusMinutes(45, this)">45m</button>
+                <button class="dur-pill" data-mins="60" onclick="setFocusMinutes(60, this)">60m</button>
+                <button class="dur-pill" id="customDurBtn" onclick="openCustomDurationModal()">自定义</button>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="startFocusBtn" onclick="toggleFocus()">开始专注</button>
+                <button class="btn btn-secondary" onclick="openAbandonConfirm()">放弃</button>
+            </div>
+            <div class="ios-widget" id="iosWidget" onclick="cycleWidgetPhoto()" title="点击切换照片，悬停可让TA看一眼/加图/删除">
+                <div class="widget-overlay-top" onclick="event.stopPropagation()">
+                    <button class="widget-chip-btn ai-only" id="toggleWidgetVisBtn" style="display:none;" onclick="toggleCurrentWidgetVisibility()">🙈 仅自己看</button>
+                    <div style="display:flex;gap:5px;margin-left:auto;">
+                        <button class="widget-chip-btn" onclick="openWidgetModal()">+ 放照片</button>
+                        <button class="widget-chip-btn" id="deleteWidgetBtn" style="display:none;" onclick="deleteCurrentWidget()">删</button>
+                    </div>
+                </div>
+                <div id="widgetContentArea" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
+                    <div class="widget-empty-placeholder">
+                        <span style="font-size:24px;">🖼️</span>
+                        <span>桌面相框小组件<br>点这里放一张喜欢的图吧</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <!-- 📌 双向书桌便利贴墙 -->
+            <div class="glass-card note-board">
+                <div class="note-board-header">
+                    <span>📌 便利贴</span>
+                    <div class="note-header-actions">
+                        <button class="mini-btn" onclick="openUserNoteModal()" title="自己手写一张便利贴贴在书桌上">✍️ 贴条</button>
+                        <button class="mini-btn ai-only" id="summonNoteBtn" onclick="summonAINote()" title="戳戳 TA 问问此刻心情或讨一张小纸条">✨ 戳TA</button>
+                        <button class="mini-btn ai-only" style="padding:4px 6px;opacity:0.72;" onclick="simulateRandomSlack()" title="测试专注切屏摸鱼抓包">🧪</button>
+                    </div>
+                </div>
+                <div class="sticky-note" id="stickyNote">
+                    <div id="noteContent"></div>
+                    <div class="author">
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                            <button class="tear-btn" onclick="tearCurrentNote()">撕掉</button>
+                            <button class="note-share-btn ai-only" id="shareUserNoteBtn" style="display:none;" onclick="shareCurrentUserNote()" title="把这张便签递给 TA 看并等 TA 回贴">💌 递给TA看</button>
+                            <span class="note-pager" id="notePager" style="display:none;">
+                                <button type="button" onclick="shiftNote(-1)" title="上一张">‹</button>
+                                <span id="notePagerText">1/1</span>
+                                <button type="button" onclick="shiftNote(1)" title="下一张">›</button>
+                            </span>
+                        </div>
+                        <span id="noteAuthor">— TA</span>
+                    </div>
+                </div>
+                <div style="color:var(--text-muted-on-card);font-size:12.5px;text-align:center;line-height:1.6;padding:0 12px;" id="emptyNoteText">
+                    书桌空空的～<br>可以点「✍️ 贴条」留言，或「✨ 戳TA」讨纸条
+                </div>
+            </div>
+
+            <!-- 💿 共享留声机 + 可视化歌单目录 -->
+            <div class="glass-card vinyl-card">
+                <div class="vinyl-top-bar">
+                    <span>💿 共享留声机</span>
+                    <div style="display:flex;gap:4px;">
+                        <button class="mini-btn" style="padding:3px 8px;font-size:11px;" onclick="openPlaylistModal()">🎵 歌单</button>
+                        <button class="mini-btn" style="padding:3px 8px;font-size:11px;" onclick="openSongModal()">+ 加歌</button>
+                    </div>
+                </div>
+                <div class="vinyl-disc" id="vinylDisc" title="点击播放/暂停" onclick="toggleAudioPlay()"></div>
+                <div class="ai-toast" id="musicToast">点击唱片播放 · 切歌需经 TA 同意</div>
+                <div class="music-controls">
+                    <button class="mini-btn" id="playPauseBtn" onclick="toggleAudioPlay()">▶ 播放</button>
+                    <div class="music-title" id="currentSongTitle">雨夜书房白噪音</div>
+                    <button class="mini-btn" id="skipBtn" onclick="requestSkipSong()">切歌</button>
+                </div>
+                <audio id="audioPlayer" loop referrerpolicy="no-referrer"></audio>
+            </div>
+        </div>
+    </div>
+
+    <!-- ✉️ 通讯抽屉 -->
+    <div class="comm-drawer" id="commDrawer">
+        <div class="im-header">
+            <div class="im-contact">
+                <div class="im-avatar" id="imHeaderAvatar">TA</div>
+                <div>
+                    <div class="im-name" id="imCharName">连线搭子</div>
+                    <div class="im-sub" id="imSubStatus">✉️ 通讯 · 线上自习室连线中</div>
+                </div>
+            </div>
+            <div class="im-actions">
+                <button class="im-icon-btn" onclick="openClearChatModal()" title="清空通讯记录">🗑️</button>
+                <button class="im-icon-btn" onclick="toggleChatDrawer()" title="收起窗口">✕</button>
+            </div>
+        </div>
+        <div class="im-messages" id="imMessagesList"></div>
+        <div class="im-attach-preview" id="imAttachPreview">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;" id="imAttachPreviewBody"></div>
+            <button class="im-icon-btn" onclick="clearPendingAttachment()" title="移除附件">✕</button>
+        </div>
+        <div class="im-input-bar">
+            <input type="file" id="chatImageInput" accept="image/*" style="display:none" onchange="handleChatImageSelect(event)">
+            <button class="im-tool-btn" type="button" onclick="document.getElementById('chatImageInput').click()" title="发送图片（支持 Ctrl+V 粘贴截图）">🖼️</button>
+            <button class="im-tool-btn" type="button" id="chatVoiceBtn" onclick="toggleVoiceRecording()" title="点击录制语音，再点完成">🎙️</button>
+            <input class="im-input" id="imInput" placeholder="发消息 / 粘贴截图..." onkeydown="if(event.key==='Enter') sendChatMessage()">
+            <button class="im-send-btn" id="imSendBtn" onclick="sendChatMessage()">↑</button>
+        </div>
+    </div>
+
+    <!-- 🗑️ 优雅三选一清空确认弹窗（彻底告别手滑误杀！） -->
+    <div class="modal-backdrop" id="clearChatModal" onclick="if(event.target===this) closeModal('clearChatModal')">
+        <div class="modal-box" style="max-width:390px;text-align:center;">
+            <h3 style="justify-content:center;margin-bottom:8px;">🗑️ 清理通讯与记忆</h3>
+            <p id="clearChatModalDesc" style="font-size:12.5px;color:#a8a29e;line-height:1.6;margin-bottom:18px;"></p>
+            <div style="display:flex;flex-direction:column;gap:9px;">
+                <button class="btn btn-secondary" style="width:100%;" onclick="executeClearChat(false)">🫧 仅清空气泡（保留 TA 脑内连续记忆）</button>
+                <button class="btn btn-danger" style="width:100%;" onclick="executeClearChat(true)">🧹 彻底重置（清空气泡 + 重置全部记忆）</button>
+                <button class="mini-btn" style="width:100%;padding:9px;border-radius:999px;" onclick="closeModal('clearChatModal')">😅 手滑点错了，取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 📚 可视化书架目录弹窗 -->
+    <div class="modal-backdrop" id="bookshelfModal" onclick="if(event.target===this) closeModal('bookshelfModal')">
+        <div class="modal-box">
+            <h3><span>📚 我的共读书架</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('bookshelfModal')">✕</span></h3>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                <span style="font-size:12px;color:#a8a29e;" id="bookshelfSummaryText">独立存放在 data/library/books.db</span>
+                <div style="display:flex;gap:6px;">
+                    <button class="mini-btn" onclick="closeModal('bookshelfModal');document.getElementById('bookFileInput').click()">📂 导入TXT/PDF</button>
+                    <button class="mini-btn" onclick="closeModal('bookshelfModal');openPasteBookModal()">📋 粘贴新篇</button>
+                </div>
+            </div>
+            <div id="tempBookSaveBanner" class="settings-section-box" style="display:none;padding:10px 12px;margin-bottom:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                    <span style="font-size:12px;color:#fde68a;">当前打开的《<span id="tempBookNameSpan"></span>》为临时阅览</span>
+                    <button class="mini-btn" style="border-color:var(--accent);color:#fde68a;" onclick="saveCurrentBookToShelf()">+ 收入书架</button>
+                </div>
+            </div>
+            <div class="catalog-list" id="bookshelfList"></div>
+        </div>
+    </div>
+
+    <!-- 📂 导入电子书确认弹窗（可改书名 + 选择是否存书架） -->
+    <div class="modal-backdrop" id="importBookModal" onclick="if(event.target===this) closeModal('importBookModal')">
+        <div class="modal-box" style="max-width:420px;">
+            <h3><span>📂 导入电子书设置</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('importBookModal')">✕</span></h3>
+            <div class="form-group">
+                <label>书名 / 篇名</label>
+                <input id="importBookTitleInput" placeholder="输入书名">
+            </div>
+            <div style="font-size:12px;color:#a8a29e;margin-bottom:12px;" id="importBookInfoTip"></div>
+            <div class="settings-section-box" style="padding:10px 12px;">
+                <label class="switch-row" style="padding:0;">
+                    <span>📚 保存到我的书架<small>勾选后可在书架目录随时切换回看；取消则仅作本次临时阅读</small></span>
+                    <input type="checkbox" id="importSaveToShelf" checked>
+                </label>
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="confirmImportBook()">放上书桌开始阅读</button>
+        </div>
+    </div>
+
+    <!-- 🎵 可视化歌单目录弹窗 -->
+    <div class="modal-backdrop" id="playlistModal" onclick="if(event.target===this) closeModal('playlistModal')">
+        <div class="modal-box">
+            <h3><span>🎵 留声机歌单目录</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('playlistModal')">✕</span></h3>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="font-size:12px;color:#a8a29e;" id="playlistHintText">点击曲目即可向 TA 申请点播切换～</span>
+                <button class="mini-btn" onclick="closeModal('playlistModal');openSongModal()">+ 加新歌</button>
+            </div>
+            <div class="catalog-list" id="playlistCatalogList"></div>
+        </div>
+    </div>
+
+    <!-- ✍️ 写一张书桌便利贴弹窗 -->
+    <div class="modal-backdrop" id="userNoteModal" onclick="if(event.target===this) closeModal('userNoteModal')">
+        <div class="modal-box" style="max-width:420px;">
+            <h3><span>✍️ 往书桌贴一张便利贴</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('userNoteModal')">✕</span></h3>
+            <div class="form-group">
+                <label>写点小纸条（比如去热杯牛奶、发疯吐槽、给 TA 留个小暗号）</label>
+                <textarea id="userStickyInput" style="min-height:96px;" placeholder="例如：去倒杯热可可马上回！"></textarea>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="submitUserStickyNote(false)">📌 仅贴在桌上</button>
+                <button class="btn btn-primary ai-only" style="flex:1;" onclick="submitUserStickyNote(true)">💌 贴上并等TA回条</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 📝 划词备注 / 分享批注弹窗 -->
+    <div class="modal-backdrop" id="highlightNoteModal" onclick="if(event.target===this) closeModal('highlightNoteModal')">
+        <div class="modal-box" style="max-width:440px;">
+            <h3><span id="hlModalTitle">📝 写下你的批注</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('highlightNoteModal')">✕</span></h3>
+            <div class="quote-preview-box" id="hlQuotePreview"></div>
+            <div class="form-group">
+                <label>你的随手想法 / 吐槽</label>
+                <textarea id="hlUserNoteInput" style="min-height:92px;" placeholder="写点此刻的感受或吐槽..."></textarea>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="submitHighlightFromModal(false)">🔒 仅自己保存</button>
+                <button class="btn btn-primary ai-only" style="flex:1;" onclick="submitHighlightFromModal(true)">📤 附带批注分享给TA</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🎛️ 配置弹窗 -->
+    <div class="modal-backdrop" id="promptConfigModal" onclick="if(event.target===this) closeModal('promptConfigModal')">
+        <div class="modal-box">
+            <h3><span>🎛️ 演绎预设与连续记忆配置</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('promptConfigModal')">✕</span></h3>
+            <div class="form-group">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <label style="margin:0;">📜 全局演绎预设（支持 {{char}} 与 {{user}} 变量）</label>
+                    <button class="mini-btn" type="button" style="padding:2px 8px;font-size:11px;" onclick="resetSystemPreset()">恢复默认预设</button>
+                </div>
+                <textarea id="cfgSystemPreset" style="min-height:130px;line-height:1.58;"></textarea>
+            </div>
+            <div class="settings-section-box">
+                <div class="memory-box-header">
+                    <span style="font-size:13px;color:#fef3c7;font-weight:500;">🧠 当前角色连续记忆条数</span>
+                    <span class="memory-pill-val" id="contextLimitBadge">24 条</span>
+                </div>
+                <input type="range" class="memory-slider" id="cfgContextLimit" min="0" max="80" step="2" value="24" oninput="updateContextLimitUI(this.value)">
+                <div class="memory-meta-row">
+                    <span id="memoryCountLabel">按角色独立隔离 · 当前已存 0 条</span>
+                    <button class="btn-danger-ghost" type="button" onclick="clearAllMemory()">🧹 清空当前角色记忆</button>
+                </div>
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="savePromptConfigPanel()">保存预设与记忆配置</button>
+        </div>
+    </div>
+
+    <!-- 角色卡弹窗 -->
+    <div class="modal-backdrop" id="characterModal" onclick="if(event.target===this) closeModal('characterModal')">
+        <div class="modal-box">
+            <h3><span>🪪 角色卡（支持 {{char}} / {{user}} 变量）</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('characterModal')">✕</span></h3>
+            <div class="preset-bar">
+                <div class="preset-bar-header">
+                    <span>🗂️ 已存角色卡库（记忆独立隔离，点即切换）</span>
+                    <button class="mini-btn" style="padding:3px 10px;font-size:11px;border-color:var(--accent);color:#fde68a;" onclick="saveAsNewCharacterCard()">+ 存为新角色卡</button>
+                </div>
+                <div class="preset-chips" id="characterPresetsList"></div>
+                <div id="presetFeedback" style="font-size:11px;margin-top:6px;"></div>
+            </div>
+            <div class="avatar-picker-row">
+                <div class="avatar-preview" id="charAvatarPreview">TA</div>
+                <div style="flex:1;">
+                    <div style="font-size:13px;font-weight:500;margin-bottom:6px;">角色头像（支持手动拖拽与缩放裁剪）</div>
+                    <div style="display:flex;gap:8px;">
+                        <input type="file" id="charAvatarInput" accept="image/*" style="display:none" onchange="openAvatarCropper(event, 'char')">
+                        <button class="mini-btn" onclick="document.getElementById('charAvatarInput').click()">✂️ 上传并裁剪</button>
+                        <button class="mini-btn" onclick="clearAvatar('char')">清除</button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group"><label>TA 是谁 / 角色名字（对应 {{char}}）</label><input id="cfgCharName" placeholder="例如：ai管家 / 温柔学长 / 毒舌监督人"></div>
+            <div class="form-group"><label>角色人设与性格灵魂（可写 {{char}} / {{user}}）</label><textarea id="cfgPersona" style="min-height:110px;" placeholder="写下 TA 的性格、说话口癖、对 {{user}} 的态度以及喜好..."></textarea></div>
+            <button class="btn btn-primary" style="width:100%;" onclick="saveCharacterPanel()">应用当前角色卡</button>
+        </div>
+    </div>
+
+    <!-- 👤 用户设定弹窗 -->
+    <div class="modal-backdrop" id="userModal" onclick="if(event.target===this) closeModal('userModal')">
+        <div class="modal-box">
+            <h3><span>👤 我的设定卡（支持 {{char}} / {{user}} 变量）</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('userModal')">✕</span></h3>
+            <div class="avatar-picker-row">
+                <div class="avatar-preview" id="userAvatarPreview">我</div>
+                <div style="flex:1;">
+                    <div style="font-size:13px;font-weight:500;margin-bottom:6px;">我的头像（支持手动拖拽与缩放裁剪）</div>
+                    <div style="display:flex;gap:8px;">
+                        <input type="file" id="userAvatarInput" accept="image/*" style="display:none" onchange="openAvatarCropper(event, 'user')">
+                        <button class="mini-btn" onclick="document.getElementById('userAvatarInput').click()">✂️ 上传并裁剪</button>
+                        <button class="mini-btn" onclick="clearAvatar('user')">清除</button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group"><label>你是谁 / 你的名字（对应 {{user}}）</label><input id="cfgUserName" placeholder="例如：你的名字 / OC 名字"></div>
+            <div class="settings-section-box">
+                <button type="button" class="quick-rel-toggle" onclick="toggleQuickRelationSection()">
+                    <span>🧩 快捷补充关系与称呼（选填）</span>
+                    <span class="quick-rel-pill" id="quickRelStatusPill">未开启 · 不额外拼接</span>
+                </button>
+                <div class="quick-rel-body" id="quickRelBody">
+                    <div style="font-size:11.5px;color:#a8a29e;margin-bottom:10px;line-height:1.5;">
+                        留空或关闭时不会发送多余拼接提示词；如果下方自定义设定写得比较简略，可以开启这里快速补全～
+                    </div>
+                    <div class="form-group"><label>{{user}} 和 {{char}} 的关系是</label><input id="cfgUserRelation" placeholder="例如：青梅竹马 / 恋人 / 欢喜冤家"></div>
+                    <div class="form-group" style="margin-bottom:0;"><label>{{char}} 习惯性称呼 {{user}} 为</label><input id="cfgCharCallUser" placeholder="例如：小猪 / 大小姐 / 直呼全名"></div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>自定义用户设定（可自由写性格、近期状态与双方背景，支持 {{char}} / {{user}}）</label>
+                <textarea id="cfgUserPersona" style="min-height:110px;" placeholder="例如：容易三分钟热度的夜猫子、最近在赶作品集/复习专业课..."></textarea>
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="saveUserPanel()">保存我的设定</button>
+        </div>
+    </div>
+
+    <!-- ⚙️ 系统设置弹窗 -->
+    <div class="modal-backdrop" id="settingsModal" onclick="if(event.target===this) closeModal('settingsModal')">
+        <div class="modal-box">
+            <h3><span>⚙️ 房间设置（API · 触发开关 · 壁纸配色）</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('settingsModal')">✕</span></h3>
+            <div class="form-group">
+                <label>运行模式（双核切换）</label>
+                <select id="cfgMode">
+                    <option value="standalone">🧠 独立灵魂模式（读书室自带角色卡调用 API）</option>
+                    <option value="mcp">🔌 MCP 寄生模式（交由外部 AstrBot 等框架接管）</option>
+                </select>
+            </div>
+            <div class="form-group"><label>API Base URL</label><input id="cfgBaseUrl" placeholder="https://api.deepseek.com/v1"></div>
+            <div class="form-group">
+                <label>API Key（纯英文 sk-... 密钥）</label>
+                <div class="pwd-wrap">
+                    <input id="cfgApiKey" type="password" placeholder="sk-...">
+                    <button type="button" class="pwd-eye-btn" onclick="togglePwdVisibility('cfgApiKey', this)" title="显示/隐藏密钥">👁️</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>模型名称（可向上游拉取，也可手填）</label>
+                <div class="inline-row">
+                    <div class="combo-wrap">
+                        <input id="cfgModelName" placeholder="点击拉取或输入模型名" autocomplete="off">
+                        <button type="button" class="combo-arrow-btn" onclick="toggleModelDropdown(event)" title="展开已拉取的模型列表">▾</button>
+                        <div class="combo-dropdown" id="modelDropdownMenu"></div>
+                    </div>
+                    <button class="mini-btn" type="button" id="fetchModelsBtn" onclick="fetchUpstreamModels()">🔄 拉取模型</button>
+                    <button class="mini-btn" type="button" id="testConnBtn" onclick="testApiConnection()">⚡ 测连接</button>
+                </div>
+                <div class="status-msg" id="apiTestStatus"></div>
+            </div>  
+
+            <div class="settings-section-box">
+                <div style="font-size:13px;color:#fef3c7;font-weight:500;margin-bottom:6px;">🪙 角色消息触发开关（关闭可省 Token）</div>
+                <label class="switch-row">
+                    <span>放弃 / 动摇继续专注时通知 TA<small>点击「放弃」弹窗里的继续或确认放弃后，是否触发 TA 发通讯消息</small></span>
+                    <input type="checkbox" id="cfgNotifyFocusDecision" checked>
+                </label>
+                <label class="switch-row">
+                    <span>暂停额度耗尽自动放弃时通知 TA<small>45 分钟内 10 分钟暂停额度用完后，是否触发 TA 发通讯消息</small></span>
+                    <input type="checkbox" id="cfgNotifyPauseTimeout" checked>
+                </label>
+            </div>
+
+            <div class="settings-section-box">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span style="font-size:13px;color:#fef3c7;font-weight:500;">🖼️ 自定义房间壁纸（适配横竖屏）</span>
+                    <div style="display:flex;gap:6px;">
+                        <input type="file" id="bgImageFileInput" accept="image/*" style="display:none" onchange="handleBgImageUpload(event)">
+                        <button class="mini-btn" type="button" onclick="document.getElementById('bgImageFileInput').click()">📂 选底图</button>
+                        <button class="mini-btn" type="button" onclick="clearRoomBgImage()">清除</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>适配模式</label>
+                    <select id="cfgBgMode" onchange="livePreviewWallpaper()">
+                        <option value="cover">🖼️ 铺满沉浸（Cover 居中裁剪 + 毛玻璃透底）</option>
+                        <option value="blur">💿 流光不裁图（底层高斯模糊兜底 + 中间完整原图安全区）</option>
+                    </select>
+                </div>
+                <div class="color-grid">
+                    <div class="form-group" style="margin-bottom:4px;">
+                        <label>背景模糊度：<span id="bgBlurVal">0px</span></label>
+                        <input type="range" id="cfgBgBlur" min="0" max="20" step="1" value="0" oninput="livePreviewWallpaper()">
+                    </div>
+                    <div class="form-group" style="margin-bottom:4px;">
+                        <label>压暗护眼遮罩：<span id="bgDimVal">32%</span></label>
+                        <input type="range" id="cfgBgDim" min="0" max="0.75" step="0.02" value="0.32" oninput="livePreviewWallpaper()">
+                    </div>
+                </div>
+                <div id="bgStatusTip" style="font-size:11px;color:#a8a29e;margin-top:4px;">未设置壁纸（当前显示纯色底色）</div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <span style="font-size:13px;color:#fef3c7;font-weight:500;">🎨 配色自定义（文字自动反色适配）</span>
+                <button class="mini-btn" type="button" onclick="resetDefaultColors()">恢复默认</button>
+            </div>
+            <div class="color-grid">
+                <div class="form-group"><label>倒计时时钟颜色</label><input type="color" id="cfgTimerColor" value="#fef3c7" style="height:36px;padding:2px;" oninput="livePreviewColors()"></div>
+                <div class="form-group"><label>按钮与主题强调色</label><input type="color" id="cfgAccentColor" value="#d97706" style="height:36px;padding:2px;" oninput="livePreviewColors()"></div>
+                <div class="form-group"><label>页面背景底色</label><input type="color" id="cfgPageBgColor" value="#1a1918" style="height:36px;padding:2px;" oninput="livePreviewColors()"></div>
+                <div class="form-group"><label>玻璃卡片底色</label><input type="color" id="cfgCardBgColor" value="#2a2826" style="height:36px;padding:2px;" oninput="livePreviewColors()"></div>
+                <div class="form-group"><label>批注墨水色（默认墨黑）</label><input type="color" id="cfgInkColor" value="#1c1917" style="height:36px;padding:2px;"></div>
+                <div class="form-group"><label>书桌便利贴底色</label><input type="color" id="cfgNoteColor" value="#fef08a" style="height:36px;padding:2px;" oninput="livePreviewColors()"></div>
+            </div>
+            <button class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="saveSettingsPanel()">保存所有设置</button>
+        </div>
+    </div>
+
+    <!-- 头像裁剪器 / 自定义时长 / 放弃确认 / 加歌 / 粘贴文本 / 相框上传弹窗 -->
+    <div class="modal-backdrop" id="avatarCropModal" style="z-index:260;">
+        <div class="modal-box" style="max-width:340px;text-align:center;">
+            <h3 style="justify-content:center;">✂️ 拖动并缩放调整头像</h3>
+            <div class="crop-stage-wrap" id="cropStage">
+                <canvas id="cropCanvas" width="240" height="240"></canvas>
+                <div class="crop-circle-guide"></div>
+            </div>
+            <div class="form-group" style="text-align:left;">
+                <label>缩放比例：<span id="cropZoomVal">1.0x</span></label>
+                <input type="range" id="cropZoomSlider" min="1" max="3" step="0.05" value="1" oninput="updateCropZoom(this.value)">
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="closeModal('avatarCropModal')">取消</button>
+                <button class="btn btn-primary" style="flex:1;" onclick="confirmAvatarCrop()">确认裁剪</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="customDurationModal" onclick="if(event.target===this) closeModal('customDurationModal')">
+        <div class="modal-box" style="max-width:340px;">
+            <h3><span>⏱️ 自定义专注时长</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('customDurationModal')">✕</span></h3>
+            <div class="form-group"><label>输入分钟数（1 ~ 180 分钟）</label><input type="number" id="customMinutesInput" min="1" max="180" value="30" onkeydown="if(event.key==='Enter') confirmCustomDuration()"></div>
+            <button class="btn btn-primary" style="width:100%;" onclick="confirmCustomDuration()">设定倒计时</button>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="abandonModal" onclick="if(event.target===this) closeModal('abandonModal')">
+        <div class="modal-box" style="max-width:400px;text-align:center;">
+            <h3 style="justify-content:center;margin-bottom:10px;">⚠️ 确认放弃这轮专注吗？</h3>
+            <p id="abandonSummaryText" style="font-size:13px;color:#a8a29e;line-height:1.6;margin-bottom:20px;"></p>
+            <div style="display:flex;gap:10px;justify-content:center;">
+                <button class="btn btn-primary" style="flex:1;" onclick="handleFocusDecision('continue')">🔥 继续专注</button>
+                <button class="btn btn-danger" style="flex:1;" onclick="handleFocusDecision('abandon')">🚪 确认放弃</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="songModal" onclick="if(event.target===this) closeModal('songModal')">
+        <div class="modal-box">
+            <h3><span>💿 往歌单塞一首歌</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('songModal')">✕</span></h3>
+            <div class="form-group"><label>歌曲名称（可加上心情标签）</label><input id="newSongTitle" placeholder="例如：晴天 - 周杰伦（#怀旧）"></div>
+            <div class="form-group"><label>网易云分享链接 / 歌曲 ID / 音频直链</label><input id="newSongUrl" placeholder="直接粘贴网易云链接或纯数字 ID，如 186016"></div>
+            <button class="btn btn-primary" style="width:100%;" onclick="addSongToPlaylist()">加入唱片机歌单</button>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="pasteBookModal" onclick="if(event.target===this) closeModal('pasteBookModal')">
+        <div class="modal-box">
+            <h3><span>📋 粘贴你想读的文本</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('pasteBookModal')">✕</span></h3>
+            <div class="form-group"><label>书名 / 篇名</label><input id="pasteBookTitle" placeholder="例如：某篇超好看的同人文"></div>
+            <div class="form-group"><label>正文内容</label><textarea id="pasteBookContent" style="min-height:165px;" placeholder="把文本粘贴在这里..."></textarea></div>
+            <div class="settings-section-box" style="padding:9px 12px;">
+                <label class="switch-row" style="padding:0;">
+                    <span>📚 保存到我的书架<small>取消勾选则仅作本次临时阅读，不会留在书架列表里</small></span>
+                    <input type="checkbox" id="pasteSaveToShelf" checked>
+                </label>
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="submitPasteBook()">放上书桌开始阅读</button>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="widgetModal" onclick="if(event.target===this) closeModal('widgetModal')">
+        <div class="modal-box">
+            <h3><span>🖼️ 添加桌面相框小组件图片</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('widgetModal')">✕</span></h3>
+            <div class="form-group"><label>选择本地图片（自动压缩存入数据库）</label><input type="file" id="widgetImageFile" accept="image/*"></div>
+            <div class="form-group"><label>角标小字 / 心情备注（选填）</label><input id="widgetCaptionInput" placeholder="例如：自推美图 / 今晚也要加油✨"></div>
+            <div class="settings-section-box ai-only" style="padding:10px 12px;">
+                <label class="switch-row" style="padding:0;">
+                    <span>👁️ 立刻给 TA 看一眼并存入画面记忆<small>仅单次传图识图并通过 &lt;memo&gt; 记住画面，后续对话 0 图像 Token 消耗！</small></span>
+                    <input type="checkbox" id="widgetVisibleToAI">
+                </label>
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="uploadWidgetPhoto()">放到书桌中央</button>
+        </div>
+    </div>
+
+    <script src="/desk-widgets.js"></script>
+    <script>
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
+        const DEFAULT_SAMPLE_BOOK = {
+            id: null, saved_to_shelf: 1,
+            title: '夜航西飞（试读片段）',
+            content: '在非洲的恩贡山脚下，我曾经有一片农场。在这个线上自习室里，时间流逝得很慢，屏幕两端只有翻页的沙沙声。\n你可以用鼠标或手指直接拖选这里的任意一句话：既可以仅划线收藏、自己写私人备注，也可以分享给屏幕对面的 TA 写页边批注。\n非专注状态下分享给 TA 的批注会立刻显影；专注途中分享则会锁进保险箱——忍不住想提前偷看？那就得看 TA 同不同意放行啦。'
+        };
+        const BUILTIN_PLAYLIST = [
+            { id: 'builtin-1', title: '雨夜书房白噪音 (Rainy Study)', url: 'https://actions.google.com/sounds/v1/weather/rain_heavy_loud.ogg', is_builtin: 1 },
+            { id: 'builtin-2', title: '壁炉柴火噼啪声 (Cozy Fireplace)', url: 'https://actions.google.com/sounds/v1/ambiences/fire.ogg', is_builtin: 1 },
+            { id: 'builtin-3', title: '深夜咖啡馆低语 (Night Cafe)', url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg', is_builtin: 1 }
+        ];
+
+        let appConfig = {
+            mode: 'standalone', soloMode: false,
+            notifyOnFocusDecision: true, notifyOnPauseTimeout: true,
+            charName: '连线搭子', persona: '', charAvatar: '',
+            userName: '我', useQuickRelation: false, userRelation: '', charCallUser: '', userPersona: '', userAvatar: '',
+            systemPreset: '', defaultSystemPreset: '', activeCharKey: '',
+            inkColor: '#1c1917', noteColor: '#fef08a',
+            pageBgColor: '#1a1918', cardBgColor: '#2a2826', accentColor: '#d97706', timerColor: '#fef3c7',
+            bgImage: '', bgMode: 'cover', bgBlur: 0, bgDim: 0.32,
+            contextLimit: 24, memoryCount: 0
+        };
+        let draftCharAvatar = '', draftUserAvatar = '', draftActiveCharKey = '', draftUseQuickRelation = false, draftBgImage = '';
+        let currentBookId = null, currentBookSavedToShelf = true, selectedQuote = '', editingHighlightId = null, selectionDebounceTimer = null;
+        let pendingImportContent = '';
+        let notesList = [], currentNoteIdx = 0, chatHistory = [], highlightsList = [], widgetPhotos = [], currentWidgetIdx = 0, savedCharacters = [], toastBannerTimer = null;
+
+        let bookPages = [[]], currentPageIdx = 0;
+        let pendingImageBase64 = '', pendingAudioBase64 = '', pendingAudioFormat = 'webm';
+        let mediaRecorder = null, audioChunks = [], isRecordingAudio = false;
+
+        let selectedMinutes = 25, totalSeconds = 1500, remainingSeconds = 1500;
+        let sessionActive = false, isFocusing = false, isPaused = false, timerInterval = null, pauseInterval = null, pauseRemainSeconds = 600;
+        const PAUSE_SEGMENTS_KEY = 'study_room_pause_segments_v2';
+        const PAUSE_WINDOW_MS = 45 * 60 * 1000;
+        const PAUSE_BUDGET_SEC = 10 * 60;
+        let currentPauseStart = null;
+        const PAPER_THEME_KEY = 'study_room_paper_theme_v1';
+        const READER_FONT_SIZE_KEY = 'study_room_reader_font_size_v1';
+        let readerFontSize = parseFloat(localStorage.getItem(READER_FONT_SIZE_KEY) || '16.5') || 16.5;
+
+        let playlist = [...BUILTIN_PLAYLIST];
+        let currentSongIndex = 0, switchCountToday = 0;
+        const audioPlayer = document.getElementById('audioPlayer');
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            setPaperTheme(localStorage.getItem(PAPER_THEME_KEY) || 'cream');
+            applyReaderFontSize(readerFontSize);
+            renderBook(DEFAULT_SAMPLE_BOOK);
+            await loadConfig(); await loadLatestBook(); await loadHighlights();
+            await loadNotes(); await loadPlaylist(); await loadWidgets(); await loadChatHistory();
+            updateTimerUI(); updateMusicUI(); updatePeekBtnUI();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.modal-backdrop.open').forEach(m => m.classList.remove('open'));
+                hideSelectionPopover();
+                return;
+            }
+            const tag = (document.activeElement?.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            if (workspace.classList.contains('reader-open')) {
+                if (e.key === 'ArrowLeft') turnPage(-1);
+                else if (e.key === 'ArrowRight') turnPage(1);
+            }
+        });
+        function getDeskSummary() {
+            const base = window.DeskWidgets ? window.DeskWidgets.getContextSummary() : '';
+            const pet = window.StudyPet ? window.StudyPet.getContextSummary() : '';
+            return [base, pet].filter(Boolean).join('；');
+        }
+        function getActiveWidgetId() {
+            if (!widgetPhotos.length) return null;
+            const cur = widgetPhotos[currentWidgetIdx % widgetPhotos.length];
+            return (cur && cur.visible_to_ai) ? cur.id : null;
+        }
+        function getFocusPayload() {
+            const focusState = isFocusing ? 'running' : (isPaused ? 'paused' : 'idle');
+            const elapsedMinutes = sessionActive ? Math.floor((totalSeconds - remainingSeconds) / 60) : 0;
+            const remainingMinutes = sessionActive ? Math.ceil(remainingSeconds / 60) : selectedMinutes;
+            return { focusState, isFocusing, totalMinutes: selectedMinutes, elapsedMinutes, remainingMinutes, activeWidgetId: getActiveWidgetId() };
+        }
+        function parseHexRgb(hex) {
+            const c = String(hex || '#2a2826').replace('#', '');
+            return c.length !== 6 ? { r: 42, g: 40, b: 38 } : { r: parseInt(c.slice(0,2),16), g: parseInt(c.slice(2,4),16), b: parseInt(c.slice(4,6),16) };
+        }
+        function getLuminance(hex) { const { r, g, b } = parseHexRgb(hex); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; }
+        function hexToRgba(hex, a) { const { r, g, b } = parseHexRgb(hex); return `rgba(${r},${g},${b},${a})`; }
+
+        function applyThemeColors(pageBg, cardBg, accent, timerCol) {
+            const root = document.documentElement;
+            const pBg = pageBg || '#1a1918', cBg = cardBg || '#2a2826', acc = accent || '#d97706';
+            const pageLight = getLuminance(pBg) > 0.52, cardLight = getLuminance(cBg) > 0.56, accLight = getLuminance(acc) > 0.62;
+            root.style.setProperty('--page-bg', pBg);
+            root.style.setProperty('--card-bg-solid', cBg);
+            root.style.setProperty('--card-bg-rgba', hexToRgba(cBg, cardLight ? 0.78 : 0.70));
+            root.style.setProperty('--accent', acc);
+            root.style.setProperty('--accent-glow', hexToRgba(acc, 0.35));
+            root.style.setProperty('--timer-color', timerCol || '#fef3c7');
+            root.style.setProperty('--text-on-page', pageLight ? '#1c1917' : '#f5f5f4');
+            root.style.setProperty('--text-muted-on-page', pageLight ? '#3f3b37' : '#a8a29e');
+            root.style.setProperty('--text-on-card', cardLight ? '#1c1917' : '#f5f5f4');
+            root.style.setProperty('--text-muted-on-card', cardLight ? '#524e4a' : '#a8a29e');
+            root.style.setProperty('--card-border', cardLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)');
+            root.style.setProperty('--card-subtle', cardLight ? 'rgba(0,0,0,0.055)' : 'rgba(255,255,255,0.06)');
+            root.style.setProperty('--card-subtle-hover', cardLight ? 'rgba(0,0,0,0.11)' : 'rgba(255,255,255,0.14)');
+            root.style.setProperty('--card-input-bg', cardLight ? 'rgba(0,0,0,0.07)' : 'rgba(0,0,0,0.28)');
+            root.style.setProperty('--toast-color', cardLight ? '#b45309' : '#fbbf24');
+            root.style.setProperty('--text-on-accent', accLight ? '#1c1917' : '#ffffff');
+        }
+        function applyWallpaper(bgImage, bgMode = 'cover', bgBlur = 0, bgDim = 0.32) {
+            const layer = document.getElementById('roomBgLayer');
+            const backdrop = document.getElementById('roomBgBackdrop');
+            const mainImg = document.getElementById('roomBgMain');
+            const overlay = document.getElementById('roomBgOverlay');
+            if (!bgImage) {
+                layer.classList.remove('active', 'mode-blur');
+                backdrop.src = ''; mainImg.src = '';
+                return;
+            }
+            layer.classList.add('active');
+            layer.classList.toggle('mode-blur', bgMode === 'blur');
+            if (backdrop.src !== bgImage) backdrop.src = bgImage;
+            if (mainImg.src !== bgImage) mainImg.src = bgImage;
+            const blurPx = Math.max(0, parseFloat(bgBlur) || 0);
+            mainImg.style.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
+            mainImg.style.transform = (bgMode === 'cover' && blurPx > 0) ? `scale(${(1 + blurPx * 0.008).toFixed(3)})` : 'none';
+            const dim = Math.max(0, Math.min(0.8, parseFloat(bgDim) || 0));
+            overlay.style.background = `rgba(15, 14, 13, ${dim})`;
+        }
+        function applyStickyNoteStyle(noteEl, bgColor) {
+            const bg = bgColor || '#fef08a';
+            noteEl.style.background = bg;
+            noteEl.style.color = getLuminance(bg) < 0.50 ? '#f5f5f4' : '#3f3a34';
+        }
+        function livePreviewColors() {
+            applyThemeColors(
+                document.getElementById('cfgPageBgColor').value, document.getElementById('cfgCardBgColor').value,
+                document.getElementById('cfgAccentColor').value, document.getElementById('cfgTimerColor').value
+            );
+            const noteEl = document.getElementById('stickyNote');
+            if (noteEl) applyStickyNoteStyle(noteEl, document.getElementById('cfgNoteColor').value);
+        }
+        function livePreviewWallpaper() {
+            const mode = document.getElementById('cfgBgMode').value;
+            const blur = parseFloat(document.getElementById('cfgBgBlur').value) || 0;
+            const dim = parseFloat(document.getElementById('cfgBgDim').value) || 0;
+            document.getElementById('bgBlurVal').innerText = `${blur}px`;
+            document.getElementById('bgDimVal').innerText = `${Math.round(dim * 100)}%`;
+            applyWallpaper(draftBgImage, mode, blur, dim);
+        }
+        async function handleBgImageUpload(event) {
+            const file = event.target.files?.[0]; if (!file) return;
+            document.getElementById('bgStatusTip').innerText = '⏳ 正在优化压缩壁纸...';
+            try {
+                draftBgImage = await compressImageToBase64(file, 1600, 0.84);
+                document.getElementById('bgStatusTip').innerText = '✅ 壁纸已加载预览，点底部「保存所有设置」永久生效';
+                livePreviewWallpaper();
+            } catch (e) { document.getElementById('bgStatusTip').innerText = '❌ 壁纸读取失败：' + e.message; }
+            event.target.value = '';
+        }
+        function clearRoomBgImage() {
+            draftBgImage = '';
+            document.getElementById('bgStatusTip').innerText = '已清除壁纸（保存后生效）';
+            applyWallpaper('');
+        }
+        function resetDefaultColors() {
+            document.getElementById('cfgPageBgColor').value = '#1a1918'; document.getElementById('cfgCardBgColor').value = '#2a2826';
+            document.getElementById('cfgAccentColor').value = '#d97706'; document.getElementById('cfgTimerColor').value = '#fef3c7';
+            document.getElementById('cfgInkColor').value = '#1c1917'; document.getElementById('cfgNoteColor').value = '#fef08a';
+            livePreviewColors();
+        }
+        function setPaperTheme(themeName) {
+            const el = document.getElementById('paperTexture');
+            el.classList.remove('theme-cream', 'theme-sage', 'theme-mist', 'theme-night');
+            if (themeName && themeName !== 'cream') el.classList.add(`theme-${themeName}`);
+            localStorage.setItem(PAPER_THEME_KEY, themeName || 'cream');
+            document.querySelectorAll('.theme-dot').forEach(dot => dot.classList.toggle('active', dot.dataset.theme === (themeName || 'cream')));
+            if (highlightsList.length) renderHighlights(highlightsList);
+        }
+        function applyReaderFontSize(sz) {
+            readerFontSize = Math.max(13, Math.min(26, sz));
+            localStorage.setItem(READER_FONT_SIZE_KEY, String(readerFontSize));
+            const el = document.getElementById('readerContent'); if (el) el.style.fontSize = `${readerFontSize}px`;
+            const lbl = document.getElementById('readerFontSizeLabel'); if (lbl) lbl.innerText = `${readerFontSize}px`;
+        }
+        function changeReaderFontSize(delta) { applyReaderFontSize(readerFontSize + delta); }
+        function renderAvatarHtml(imgData, fallback) { return imgData ? `<img src="${imgData}" alt="avatar">` : escapeHtml((fallback || 'TA').slice(0, 1)); }
+        function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+        // 🧘 单人专注模式切换
+        function applySoloModeUI() {
+            const isSolo = Boolean(appConfig.soloMode);
+            document.body.classList.toggle('solo-mode', isSolo);
+            const name = appConfig.charName || '连线搭子';
+            const badge = document.getElementById('modeBadge');
+            if (isSolo) {
+                badge.innerHTML = `🧘 单人专注模式 <span class="mode-switch-hint">· 点此连线</span>`;
+                document.getElementById('commDrawer').classList.remove('open');
+                document.getElementById('musicToast').innerText = '单人专注模式 · 自由播放与切歌';
+                document.getElementById('emptyNoteText').innerHTML = '书桌空空的～<br>点「✍️ 贴条」给自己留张便签吧';
+                if (!sessionActive) document.getElementById('timerStatusLabel').innerText = 'SOLO FOCUS · 纯享单人专注';
+            } else {
+                badge.innerHTML = appConfig.mode === 'mcp'
+                    ? `🔌 MCP 外部连线中 <span class="mode-switch-hint">· 切单人</span>`
+                    : `<span class="mini-avatar-dot">${renderAvatarHtml(appConfig.charAvatar, name)}</span> 线上陪伴 · ${escapeHtml(name)} <span class="mode-switch-hint">· 切单人</span>`;
+                document.getElementById('musicToast').innerText = '点击唱片播放 · 切歌需经 TA 同意';
+                document.getElementById('emptyNoteText').innerHTML = '书桌空空的～<br>可以点「✍️ 贴条」留言，或「✨ 戳TA」讨纸条';
+                if (!sessionActive) document.getElementById('timerStatusLabel').innerText = 'ONLINE FOCUS · 休闲状态';
+            }
+            renderHighlights(highlightsList);
+            renderWidget();
+            renderNotes();
+            updatePeekBtnUI();
+        }
+        async function toggleSoloMode() {
+            appConfig.soloMode = !appConfig.soloMode;
+            applySoloModeUI();
+            try {
+                await fetch(`${API_BASE}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ soloMode: appConfig.soloMode }) });
+            } catch (e) {}
+            showCommBanner(
+                appConfig.soloMode ? '🧘 已切换至单人专注模式' : `✨ 已恢复线上陪伴 · ${appConfig.charName || 'TA'}`,
+                appConfig.soloMode ? '已禁用所有 AI 互动与抓包，0 Token 安静自习～' : '重新连线成功！单人模式记的便签和划线随时可手动递给 TA 看～',
+                false
+            );
+        }
+
+        async function loadConfig() {
+            try {
+                const data = await (await fetch(`${API_BASE}/api/config`)).json();
+                appConfig = { ...appConfig, ...data };
+                applyThemeColors(appConfig.pageBgColor, appConfig.cardBgColor, appConfig.accentColor, appConfig.timerColor);
+                applyWallpaper(appConfig.bgImage, appConfig.bgMode, appConfig.bgBlur, appConfig.bgDim);
+                const name = appConfig.charName || '连线搭子';
+                document.getElementById('imCharName').innerText = name;
+                document.getElementById('imHeaderAvatar').innerHTML = renderAvatarHtml(appConfig.charAvatar, name);
+                applySoloModeUI();
+                renderChatMessages(chatHistory);
+            } catch (e) {}
+        }
+
+        function showCommBanner(title, text, showUnread = false) {
+            const banner = document.getElementById('commToastBanner');
+            document.getElementById('toastAvatar').innerHTML = appConfig.soloMode ? '🧘' : renderAvatarHtml(appConfig.charAvatar, appConfig.charName);
+            document.getElementById('toastTitle').innerText = title;
+            document.getElementById('toastText').innerText = text;
+            banner.classList.add('show');
+            if (showUnread && !appConfig.soloMode && !document.getElementById('commDrawer').classList.contains('open')) {
+                document.getElementById('commUnreadDot').classList.add('show');
+            }
+            clearTimeout(toastBannerTimer);
+            toastBannerTimer = setTimeout(() => banner.classList.remove('show'), 6500);
+        }
+        function openChatFromBanner() {
+            document.getElementById('commToastBanner').classList.remove('show');
+            if (!appConfig.soloMode && !document.getElementById('commDrawer').classList.contains('open')) toggleChatDrawer();
+        }
+
+        // 头像裁剪器
+        let cropTarget = 'char', cropImg = null, cropBaseScale = 1, cropZoom = 1, cropOffsetX = 0, cropOffsetY = 0, isDraggingCrop = false, dragStartX = 0, dragStartY = 0;
+        function openAvatarCropper(event, target) {
+            const file = event.target.files[0]; if (!file) return;
+            cropTarget = target;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    cropImg = img; cropBaseScale = Math.max(240 / img.width, 240 / img.height);
+                    cropZoom = 1; cropOffsetX = 0; cropOffsetY = 0;
+                    document.getElementById('cropZoomSlider').value = '1'; document.getElementById('cropZoomVal').innerText = '1.0x';
+                    drawCropCanvas(); document.getElementById('avatarCropModal').classList.add('open');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file); event.target.value = '';
+        }
+        function drawCropCanvas() {
+            if (!cropImg) return;
+            const ctx = document.getElementById('cropCanvas').getContext('2d');
+            ctx.clearRect(0, 0, 240, 240);
+            const w = cropImg.width * cropBaseScale * cropZoom, h = cropImg.height * cropBaseScale * cropZoom;
+            const maxX = Math.max(0, (w - 240) / 2), maxY = Math.max(0, (h - 240) / 2);
+            cropOffsetX = Math.max(-maxX, Math.min(maxX, cropOffsetX)); cropOffsetY = Math.max(-maxY, Math.min(maxY, cropOffsetY));
+            ctx.drawImage(cropImg, (240 - w) / 2 + cropOffsetX, (240 - h) / 2 + cropOffsetY, w, h);
+        }
+        function updateCropZoom(v) { cropZoom = parseFloat(v); document.getElementById('cropZoomVal').innerText = `${cropZoom.toFixed(1)}x`; drawCropCanvas(); }
+        const cropStage = document.getElementById('cropStage');
+        cropStage.addEventListener('pointerdown', (e) => { isDraggingCrop = true; dragStartX = e.clientX; dragStartY = e.clientY; cropStage.setPointerCapture(e.pointerId); });
+        cropStage.addEventListener('pointermove', (e) => { if (!isDraggingCrop) return; cropOffsetX += (e.clientX - dragStartX); cropOffsetY += (e.clientY - dragStartY); dragStartX = e.clientX; dragStartY = e.clientY; drawCropCanvas(); });
+        cropStage.addEventListener('pointerup', () => { isDraggingCrop = false; });
+        function confirmAvatarCrop() {
+            const data = document.getElementById('cropCanvas').toDataURL('image/jpeg', 0.88);
+            if (cropTarget === 'char') { draftCharAvatar = data; document.getElementById('charAvatarPreview').innerHTML = renderAvatarHtml(data, 'TA'); }
+            else { draftUserAvatar = data; document.getElementById('userAvatarPreview').innerHTML = renderAvatarHtml(data, '我'); }
+            closeModal('avatarCropModal');
+        }
+        function clearAvatar(target) {
+            if (target === 'char') { draftCharAvatar = ''; document.getElementById('charAvatarPreview').innerHTML = escapeHtml((document.getElementById('cfgCharName').value || 'TA').slice(0, 1)); }
+            else { draftUserAvatar = ''; document.getElementById('userAvatarPreview').innerHTML = escapeHtml((document.getElementById('cfgUserName').value || '我').slice(0, 1)); }
+        }
+
+        // 🎛️ 配置弹窗
+        function updateContextLimitUI(val) {
+            const n = parseInt(val, 10) || 0;
+            document.getElementById('contextLimitBadge').innerText = n === 0 ? '0 条（无记忆）' : `${n} 条`;
+        }
+        function resetSystemPreset() { document.getElementById('cfgSystemPreset').value = appConfig.defaultSystemPreset || ''; }
+        async function openPromptConfigModal() {
+            document.getElementById('cfgSystemPreset').value = appConfig.systemPreset || appConfig.defaultSystemPreset || '';
+            const lim = appConfig.contextLimit ?? 24;
+            document.getElementById('cfgContextLimit').value = lim;
+            updateContextLimitUI(lim);
+            document.getElementById('promptConfigModal').classList.add('open');
+            try {
+                const st = await (await fetch(`${API_BASE}/api/memory/stats`)).json();
+                if (st.success) {
+                    appConfig.memoryCount = st.memoryCount;
+                    document.getElementById('memoryCountLabel').innerText = `【${st.charName || appConfig.charName}】独立记忆 · 已存 ${st.memoryCount} 条`;
+                }
+            } catch (e) {}
+        }
+        async function savePromptConfigPanel() {
+            await fetch(`${API_BASE}/api/config`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ systemPreset: document.getElementById('cfgSystemPreset').value.trim(), contextLimit: parseInt(document.getElementById('cfgContextLimit').value, 10) })
+            });
+            closeModal('promptConfigModal'); await loadConfig();
+            showCommBanner('🎛️ 配置已生效', `预设与上下文条数（${appConfig.contextLimit} 条）已保存～`, false);
+        }
+        async function clearAllMemory() {
+            const name = appConfig.charName || 'TA';
+            if (!confirm(`确定要清空【${name}】的专属连续记忆与通讯记录吗？（其他角色卡不受影响）`)) return;
+            await fetch(`${API_BASE}/api/memory?clearChat=true`, { method: 'DELETE' });
+            chatHistory = []; renderChatMessages([]); appConfig.memoryCount = 0;
+            const lbl = document.getElementById('memoryCountLabel');
+            if (lbl) lbl.innerText = `【${name}】独立记忆 · 已存 0 条`;
+            showCommBanner('🧹 记忆已归零', `【${name}】的上下文与通讯记录已全部清空，开启全新连线～`, false);
+        }
+
+        // 角色卡 / 用户卡 / 设置面板
+        async function openCharacterModal() {
+            draftCharAvatar = appConfig.charAvatar || '';
+            draftActiveCharKey = appConfig.activeCharKey || '';
+            document.getElementById('cfgCharName').value = appConfig.charName || '';
+            document.getElementById('cfgPersona').value = appConfig.persona || '';
+            document.getElementById('charAvatarPreview').innerHTML = renderAvatarHtml(draftCharAvatar, appConfig.charName);
+            document.getElementById('presetFeedback').innerText = '';
+            document.getElementById('characterModal').classList.add('open');
+            await loadCharacterCards();
+        }
+        async function saveCharacterPanel() {
+            const newName = document.getElementById('cfgCharName').value.trim() || '连线搭子';
+            const nextKey = draftActiveCharKey || `custom_${newName}`;
+            await fetch(`${API_BASE}/api/config`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ activeCharKey: nextKey, charName: newName, persona: document.getElementById('cfgPersona').value.trim(), charAvatar: draftCharAvatar })
+            });
+            closeModal('characterModal'); await loadConfig(); await loadChatHistory(); await loadNotes();
+        }
+        async function loadCharacterCards() {
+            try { savedCharacters = (await (await fetch(`${API_BASE}/api/characters`)).json()).data || []; renderCharacterPresets(); } catch (e) {}
+        }
+        function renderCharacterPresets() {
+            const box = document.getElementById('characterPresetsList');
+            if (!savedCharacters.length) { box.innerHTML = `<span style="font-size:12px;color:#57534e;">暂无保存的角色卡，填好下方信息点右上角即可保存～</span>`; return; }
+            box.innerHTML = savedCharacters.map(c => `<div class="preset-chip" onclick="applyCharacterCard(${c.id})">${c.avatar ? `<img class="chip-ava" src="${c.avatar}">` : `<span class="dot" style="background:${c.ink_color || '#1c1917'}"></span>`}<span>${escapeHtml(c.char_name)}</span><span style="opacity:0.65;font-size:10.5px;">(${c.memory_count || 0})</span><span class="del-x" onclick="event.stopPropagation();deleteCharacterCard(${c.id})">×</span></div>`).join('');
+        }
+        function applyCharacterCard(id) {
+            const c = savedCharacters.find(x => x.id === id); if (!c) return;
+            document.getElementById('cfgCharName').value = c.char_name; document.getElementById('cfgPersona').value = c.persona;
+            draftActiveCharKey = c.char_key || `card_${c.id}`; draftCharAvatar = c.avatar || '';
+            document.getElementById('charAvatarPreview').innerHTML = renderAvatarHtml(draftCharAvatar, c.char_name);
+            const fb = document.getElementById('presetFeedback'); fb.style.color = '#fbbf24';
+            fb.innerText = `✨ 已选中【${c.char_name}】（独立记忆 ${c.memory_count || 0} 条），点下方「应用当前角色卡」即可切换时间线！`;
+        }
+        async function saveAsNewCharacterCard() {
+            const fb = document.getElementById('presetFeedback');
+            const char_name = document.getElementById('cfgCharName').value.trim(), persona = document.getElementById('cfgPersona').value.trim();
+            if (!char_name || !persona) { fb.style.color = '#f87171'; fb.innerText = '⚠️ 请先填好名字和人设哦！'; return; }
+            const res = await fetch(`${API_BASE}/api/characters`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ char_name, persona, avatar: draftCharAvatar, ink_color: appConfig.inkColor, note_color: appConfig.noteColor }) });
+            const data = await res.json();
+            if (!res.ok || !data.success) { fb.style.color = '#f87171'; fb.innerText = `❌ ${data.message}`; return; }
+            if (data.card?.char_key) draftActiveCharKey = data.card.char_key;
+            fb.style.color = '#4ade80'; fb.innerText = `✅ 角色卡【${char_name}】已存入仓库并分配独立记忆区！`;
+            await loadCharacterCards();
+        }
+        async function deleteCharacterCard(id) {
+            if (!confirm('删除该角色卡会同步清理它的专属聊天与记忆记录，确定吗？')) return;
+            await fetch(`${API_BASE}/api/characters/${id}`, { method: 'DELETE' }); await loadCharacterCards();
+        }
+
+        function syncQuickRelationUI() {
+            document.getElementById('quickRelBody').classList.toggle('open', draftUseQuickRelation);
+            const pill = document.getElementById('quickRelStatusPill');
+            pill.classList.toggle('on', draftUseQuickRelation);
+            pill.innerText = draftUseQuickRelation ? '已开启 · 自动拼接 ✓' : '未开启 · 不额外拼接';
+        }
+        function toggleQuickRelationSection() { draftUseQuickRelation = !draftUseQuickRelation; syncQuickRelationUI(); }
+        function openUserModal() {
+            draftUserAvatar = appConfig.userAvatar || '';
+            draftUseQuickRelation = Boolean(appConfig.useQuickRelation);
+            document.getElementById('cfgUserName').value = appConfig.userName || '';
+            document.getElementById('cfgUserRelation').value = appConfig.userRelation || '';
+            document.getElementById('cfgCharCallUser').value = appConfig.charCallUser || '';
+            document.getElementById('cfgUserPersona').value = appConfig.userPersona || '';
+            document.getElementById('userAvatarPreview').innerHTML = renderAvatarHtml(draftUserAvatar, appConfig.userName || '我');
+            syncQuickRelationUI();
+            document.getElementById('userModal').classList.add('open');
+        }
+        async function saveUserPanel() {
+            const rel = document.getElementById('cfgUserRelation').value.trim(), call = document.getElementById('cfgCharCallUser').value.trim();
+            const enableQuick = draftUseQuickRelation && Boolean(rel || call);
+            await fetch(`${API_BASE}/api/config`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userName: document.getElementById('cfgUserName').value.trim() || '我', useQuickRelation: enableQuick, userRelation: rel, charCallUser: call, userPersona: document.getElementById('cfgUserPersona').value.trim(), userAvatar: draftUserAvatar })
+            });
+            closeModal('userModal'); await loadConfig();
+        }
+
+        function openSettingsModal() {
+            document.getElementById('cfgMode').value = appConfig.mode || 'standalone';
+            document.getElementById('cfgBaseUrl').value = appConfig.baseURL || '';
+            document.getElementById('cfgApiKey').value = appConfig.apiKey || '';
+            document.getElementById('cfgModelName').value = appConfig.modelName || '';
+            document.getElementById('cfgNotifyFocusDecision').checked = appConfig.notifyOnFocusDecision !== false;
+            document.getElementById('cfgNotifyPauseTimeout').checked = appConfig.notifyOnPauseTimeout !== false;
+
+            draftBgImage = appConfig.bgImage || '';
+            document.getElementById('cfgBgMode').value = appConfig.bgMode || 'cover';
+            document.getElementById('cfgBgBlur').value = appConfig.bgBlur ?? 0;
+            document.getElementById('cfgBgDim').value = appConfig.bgDim ?? 0.32;
+            document.getElementById('bgBlurVal').innerText = `${appConfig.bgBlur ?? 0}px`;
+            document.getElementById('bgDimVal').innerText = `${Math.round((appConfig.bgDim ?? 0.32) * 100)}%`;
+            document.getElementById('bgStatusTip').innerText = draftBgImage ? '✅ 已启用自定义壁纸（可随时更换或清除）' : '未设置壁纸（当前显示纯色底色）';
+
+            document.getElementById('cfgTimerColor').value = appConfig.timerColor || '#fef3c7';
+            document.getElementById('cfgPageBgColor').value = appConfig.pageBgColor || '#1a1918';
+            document.getElementById('cfgCardBgColor').value = appConfig.cardBgColor || '#2a2826';
+            document.getElementById('cfgAccentColor').value = appConfig.accentColor || '#d97706';
+            document.getElementById('cfgInkColor').value = appConfig.inkColor || '#1c1917';
+            document.getElementById('cfgNoteColor').value = appConfig.noteColor || '#fef08a';
+            document.getElementById('apiTestStatus').innerText = '';
+            document.getElementById('settingsModal').classList.add('open');
+        }
+        async function saveSettingsPanel() {
+            const status = document.getElementById('apiTestStatus');
+            const res = await fetch(`${API_BASE}/api/config`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mode: document.getElementById('cfgMode').value,
+                    notifyOnFocusDecision: document.getElementById('cfgNotifyFocusDecision').checked,
+                    notifyOnPauseTimeout: document.getElementById('cfgNotifyPauseTimeout').checked,
+                    baseURL: document.getElementById('cfgBaseUrl').value.trim(),
+                    apiKey: document.getElementById('cfgApiKey').value.trim(),
+                    modelName: document.getElementById('cfgModelName').value.trim(),
+                    bgImage: draftBgImage,
+                    bgMode: document.getElementById('cfgBgMode').value,
+                    bgBlur: parseFloat(document.getElementById('cfgBgBlur').value) || 0,
+                    bgDim: parseFloat(document.getElementById('cfgBgDim').value) || 0,
+                    timerColor: document.getElementById('cfgTimerColor').value,
+                    pageBgColor: document.getElementById('cfgPageBgColor').value,
+                    cardBgColor: document.getElementById('cfgCardBgColor').value,
+                    accentColor: document.getElementById('cfgAccentColor').value,
+                    inkColor: document.getElementById('cfgInkColor').value,
+                    noteColor: document.getElementById('cfgNoteColor').value
+                })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) { status.style.color = '#f87171'; status.innerText = `❌ ${data.message}`; return; }
+            closeModal('settingsModal'); await loadConfig(); await loadHighlights(); await loadNotes();
+        }
+let fetchedModelsList = [];
+        function togglePwdVisibility(inputId, btn) {
+            const inp = document.getElementById(inputId);
+            if (!inp) return;
+            const isPwd = inp.type === 'password';
+            inp.type = isPwd ? 'text' : 'password';
+            if (btn) btn.innerText = isPwd ? '🙈' : '👁️';
+        }
+        function renderModelDropdown() {
+            const menu = document.getElementById('modelDropdownMenu');
+            if (!menu) return;
+            if (!fetchedModelsList.length) {
+                menu.innerHTML = `<div style="padding:8px 10px;font-size:12px;color:#78716c;">请先点右侧「🔄 拉取模型」获取列表</div>`;
+                return;
+            }
+            const cur = (document.getElementById('cfgModelName')?.value || '').trim();
+            menu.innerHTML = fetchedModelsList.map(m =>
+                `<div class="combo-opt ${m === cur ? 'selected' : ''}" onclick="pickModelOption('${escapeHtml(m)}')">${escapeHtml(m)}</div>`
+            ).join('');
+        }
+        function toggleModelDropdown(e) {
+            if (e) e.stopPropagation();
+            const menu = document.getElementById('modelDropdownMenu');
+            if (!menu) return;
+            renderModelDropdown();
+            menu.classList.toggle('open');
+        }
+        function pickModelOption(modelName) {
+            const inp = document.getElementById('cfgModelName');
+            if (inp) inp.value = modelName;
+            document.getElementById('modelDropdownMenu')?.classList.remove('open');
+        }
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('modelDropdownMenu');
+            if (menu && !e.target.closest('.combo-wrap')) menu.classList.remove('open');
+        });
+        async function fetchUpstreamModels() {
+            const btn = document.getElementById('fetchModelsBtn'), status = document.getElementById('apiTestStatus');
+            btn.disabled = true; status.style.color = '#fbbf24'; status.innerText = '🔄 正在向上游拉取模型列表...';
+            try {
+                const res = await fetch(`${API_BASE}/api/models`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: document.getElementById('cfgApiKey').value, baseURL: document.getElementById('cfgBaseUrl').value }) });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
+                fetchedModelsList = data.models || [];
+                renderModelDropdown();
+                document.getElementById('modelDropdownMenu')?.classList.add('open');
+                status.style.color = '#4ade80'; status.innerText = `✅ 已拉取 ${fetchedModelsList.length} 个模型！直接点选或点 ▾ 切换`;
+            } catch (e) { status.style.color = '#f87171'; status.innerText = `❌ ${e.message}`; } finally { btn.disabled = false; }
+        }
+        async function testApiConnection() {
+            const btn = document.getElementById('testConnBtn'), status = document.getElementById('apiTestStatus');
+            btn.disabled = true; status.style.color = '#fbbf24'; status.innerText = '⚡ 正在发送握手信号...';
+            try {
+                const res = await fetch(`${API_BASE}/api/test-connection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: document.getElementById('cfgApiKey').value, baseURL: document.getElementById('cfgBaseUrl').value, modelName: document.getElementById('cfgModelName').value }) });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
+                status.style.color = '#4ade80'; status.innerText = `✅ 连接畅通！${data.model} 耗时 ${data.latency}ms（“${data.reply}”）`;
+            } catch (e) { status.style.color = '#f87171'; status.innerText = `❌ ${e.message}`; } finally { btn.disabled = false; }
+        }
+
+        // 专注计时与 45 分钟动态累计 10 分钟暂停
+        function loadPauseSegments(now = Date.now()) {
+            const cutoff = now - PAUSE_WINDOW_MS;
+            try {
+                const raw = JSON.parse(localStorage.getItem(PAUSE_SEGMENTS_KEY) || '[]');
+                const valid = raw.filter(s => s && typeof s.start === 'number' && typeof s.end === 'number' && s.end > cutoff);
+                localStorage.setItem(PAUSE_SEGMENTS_KEY, JSON.stringify(valid));
+                return valid;
+            } catch { return []; }
+        }
+        function getUsedPauseSeconds(now = Date.now()) {
+            const windowStart = now - PAUSE_WINDOW_MS, segments = loadPauseSegments(now);
+            let totalMs = 0;
+            for (const seg of segments) { const s = Math.max(seg.start, windowStart), e = Math.min(seg.end, now); if (e > s) totalMs += (e - s); }
+            if (currentPauseStart !== null) { const s = Math.max(currentPauseStart, windowStart); if (now > s) totalMs += (now - s); }
+            return Math.floor(totalMs / 1000);
+        }
+        function getRemainingPauseSeconds(now = Date.now()) { return Math.max(0, PAUSE_BUDGET_SEC - getUsedPauseSeconds(now)); }
+        function commitCurrentPause(now = Date.now()) {
+            if (currentPauseStart === null) return;
+            if (now > currentPauseStart) { const segments = loadPauseSegments(now); segments.push({ start: currentPauseStart, end: now }); localStorage.setItem(PAUSE_SEGMENTS_KEY, JSON.stringify(segments)); }
+            currentPauseStart = null;
+        }
+        function recordStatsSafely(mins, isCompleted) {
+            try {
+                if (!window.DeskWidgets) return;
+                if (isCompleted) {
+                    if (typeof window.DeskWidgets.recordCompletedMinutes === 'function') window.DeskWidgets.recordCompletedMinutes(mins);
+                    else if (typeof window.DeskWidgets.recordFocusedSession === 'function') window.DeskWidgets.recordFocusedSession(mins, true);
+                } else {
+                    if (typeof window.DeskWidgets.recordPartialMinutes === 'function') window.DeskWidgets.recordPartialMinutes(mins);
+                    else if (typeof window.DeskWidgets.recordFocusedSession === 'function') window.DeskWidgets.recordFocusedSession(mins, false);
+                }
+            } catch (err) {}
+        }
+        function setFocusMinutes(mins, btnEl) {
+            if (sessionActive) return;
+            selectedMinutes = mins; totalSeconds = mins * 60; remainingSeconds = totalSeconds; updateTimerUI();
+            document.querySelectorAll('.dur-pill').forEach(b => b.classList.remove('active'));
+            if (btnEl) btnEl.classList.add('active');
+        }
+        function openCustomDurationModal() {
+            if (sessionActive) return;
+            document.getElementById('customMinutesInput').value = selectedMinutes;
+            document.getElementById('customDurationModal').classList.add('open');
+            setTimeout(() => document.getElementById('customMinutesInput').select(), 80);
+        }
+        function confirmCustomDuration() {
+            const mins = parseInt(document.getElementById('customMinutesInput').value, 10);
+            if (isNaN(mins) || mins < 1 || mins > 180) { alert('请输入 1~180 的整数分钟哦～'); return; }
+            const btn = document.getElementById('customDurBtn'); btn.innerText = `${mins}m`;
+            setFocusMinutes(mins, btn); closeModal('customDurationModal');
+        }
+        function startMainTimerLoop() {
+            clearInterval(timerInterval); clearInterval(pauseInterval);
+            isPaused = false; isFocusing = true; sessionActive = true;
+            document.getElementById('durationPills').classList.add('locked');
+            document.getElementById('pauseWarningBar').classList.remove('show');
+            document.getElementById('startFocusBtn').innerText = '暂停';
+            document.getElementById('timerStatusLabel').innerText = appConfig.soloMode ? 'SOLO FOCUS · 沉浸专注中' : 'ONLINE FOCUS · 沉浸专注中';
+            updateTimerUI(); updatePeekBtnUI();
+            timerInterval = setInterval(() => { remainingSeconds--; updateTimerUI(); if (remainingSeconds <= 0) completeFocusNaturally(); }, 1000);
+        }
+        function toggleFocus() {
+            if (isFocusing) {
+                const availSec = getRemainingPauseSeconds();
+                if (availSec <= 0) { showCommBanner('⏸️ 暂停额度已用完', '45 分钟内累计 10 分钟暂停额度已耗尽，坚持一下或点「放弃」哦～', false); return; }
+                clearInterval(timerInterval);
+                isFocusing = false; isPaused = true; currentPauseStart = Date.now(); pauseRemainSeconds = availSec;
+                document.getElementById('startFocusBtn').innerText = '继续专注';
+                document.getElementById('timerStatusLabel').innerText = 'PAUSED · 限时休息中';
+                document.getElementById('pauseWarningBar').classList.add('show');
+                updatePauseBarUI(); updateTimerUI(); updatePeekBtnUI();
+                clearInterval(pauseInterval);
+                pauseInterval = setInterval(() => {
+                    pauseRemainSeconds = getRemainingPauseSeconds(); updatePauseBarUI();
+                    if (pauseRemainSeconds <= 0) { commitCurrentPause(); clearInterval(pauseInterval); handleFocusDecision('pause_timeout'); }
+                }, 1000);
+            } else { commitCurrentPause(); startMainTimerLoop(); }
+        }
+        function updatePauseBarUI() {
+            const m = String(Math.floor(pauseRemainSeconds / 60)).padStart(2, '0'), s = String(pauseRemainSeconds % 60).padStart(2, '0');
+            document.getElementById('pauseWarningBar').innerText = `⏸ 45分钟内剩余暂停额度 ${m}:${s} · 耗尽将自动放弃`;
+        }
+        async function completeFocusNaturally() {
+            commitCurrentPause(); clearInterval(timerInterval); clearInterval(pauseInterval);
+            isFocusing = false; isPaused = false; sessionActive = false;
+            recordStatsSafely(selectedMinutes, true);
+            remainingSeconds = totalSeconds; updateTimerUI(); updatePeekBtnUI();
+            document.getElementById('durationPills').classList.remove('locked');
+            document.getElementById('pauseWarningBar').classList.remove('show');
+            document.getElementById('startFocusBtn').innerText = '开始专注';
+            document.getElementById('timerStatusLabel').innerText = appConfig.soloMode ? 'COMPLETED · 本轮专注已完成！' : 'COMPLETED · 本轮完成，批注已显影！';
+            await unlockHighlightsOnly(true, !appConfig.soloMode);
+            handleFocusDecision('complete');
+        }
+        function openAbandonConfirm() {
+            if (!sessionActive) { showCommBanner('⏱️ 还没开始计时呢', '先点「开始专注」，之后才能触发放弃判定哦～', false); return; }
+            const elapsed = Math.floor((totalSeconds - remainingSeconds) / 60), remain = Math.ceil(remainingSeconds / 60);
+            const notifyHint = (!appConfig.soloMode && appConfig.notifyOnFocusDecision !== false)
+                ? `\n不管你是真要放弃还是咬牙继续，${appConfig.charName || 'TA'} 都会在「✉️ 通讯」里发消息回应你哦～`
+                : `\n（已关闭放弃/继续角色消息通知或处于单人模式，将安静结算不消耗 Token）`;
+            document.getElementById('abandonSummaryText').innerText = `本轮原定 ${selectedMinutes} 分钟，已坚持 ${elapsed} 分钟，还剩 ${remain} 分钟。${notifyHint}`;
+            document.getElementById('abandonModal').classList.add('open');
+        }
+        async function handleFocusDecision(decision) {
+            const elapsedMinutes = decision === 'complete' ? selectedMinutes : Math.floor((totalSeconds - remainingSeconds) / 60);
+            const remainingMinutes = decision === 'complete' ? 0 : Math.ceil(remainingSeconds / 60);
+            closeModal('abandonModal');
+            if (decision === 'abandon' || decision === 'pause_timeout') {
+                commitCurrentPause(); clearInterval(timerInterval); clearInterval(pauseInterval);
+                isFocusing = false; isPaused = false; sessionActive = false;
+                remainingSeconds = totalSeconds; updateTimerUI(); updatePeekBtnUI();
+                document.getElementById('durationPills').classList.remove('locked');
+                document.getElementById('pauseWarningBar').classList.remove('show');
+                document.getElementById('startFocusBtn').innerText = '开始专注';
+                document.getElementById('timerStatusLabel').innerText = decision === 'pause_timeout' ? 'TIMEOUT · 暂停额度耗尽已放弃' : 'ONLINE FOCUS · 已中断本轮';
+                if (elapsedMinutes >= 1) recordStatsSafely(elapsedMinutes, false);
+            } else if (decision === 'continue' && isPaused) { commitCurrentPause(); startMainTimerLoop(); }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/focus/decision`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision, elapsedMinutes, remainingMinutes, totalMinutes: selectedMinutes, currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
+                if (data.skipped) return;
+                if (data.chatMsg) { chatHistory.push(data.chatMsg); renderChatMessages(chatHistory); showCommBanner(`✉️ ${appConfig.charName || 'TA'} 发来一条通讯`, data.chatMsg.content, true); }
+            } catch (e) { if (!appConfig.soloMode) showCommBanner('⚠️ 无法连线到 TA', e.message, false); }
+        }
+        function updateTimerUI() {
+            const t = `${String(Math.floor(remainingSeconds / 60)).padStart(2, '0')}:${String(remainingSeconds % 60).padStart(2, '0')}`;
+            document.getElementById('timerDisplay').innerText = t;
+            const icon = isFocusing ? '⏱️' : (isPaused ? '⏸️' : '🕒');
+            const mini = document.getElementById('readerMiniTimer'); if (mini) mini.innerText = `${icon} ${t}`;
+        }
+
+        // ✉️ 通讯（多模态图片 + 语音 + 三选一防误删清空弹窗）
+        function parseMessageContent(rawContent) {
+            const s = String(rawContent || '');
+            if (s.startsWith('{') && s.includes('"__mm"')) { try { const obj = JSON.parse(s); if (obj && obj.__mm) return obj; } catch {} }
+            return { text: s, imageData: '', audioData: '' };
+        }
+        function renderBubbleInnerHtml(rawContent) {
+            const { text, imageData, audioData } = parseMessageContent(rawContent);
+            let html = '';
+            if (imageData) html += `<img class="im-bubble-img" src="${imageData}" alt="图片" onclick="window.open('${imageData}', '_blank')">`;
+            if (audioData) html += `<audio class="im-bubble-audio" controls src="${audioData}"></audio>`;
+            if (text) html += `<div>${escapeHtml(text)}</div>`;
+            return html || escapeHtml(rawContent);
+        }
+        function updateAttachPreviewUI() {
+            const bar = document.getElementById('imAttachPreview'), body = document.getElementById('imAttachPreviewBody');
+            if (!pendingImageBase64 && !pendingAudioBase64) { bar.classList.remove('show'); body.innerHTML = ''; return; }
+            let html = '';
+            if (pendingImageBase64) html += `<img class="im-attach-thumb" src="${pendingImageBase64}" alt="预览"><span style="font-size:12px;color:#d6d3d1;">已附带图片</span>`;
+            if (pendingAudioBase64) html += `<audio controls src="${pendingAudioBase64}" style="height:28px;max-width:190px;"></audio>`;
+            body.innerHTML = html; bar.classList.add('show');
+        }
+        function clearPendingAttachment() { pendingImageBase64 = ''; pendingAudioBase64 = ''; updateAttachPreviewUI(); }
+        async function handleChatImageSelect(event) {
+            const file = event.target.files?.[0]; if (!file) return;
+            pendingImageBase64 = await compressImageToBase64(file, 960, 0.84); updateAttachPreviewUI(); event.target.value = '';
+        }
+        document.getElementById('imInput').addEventListener('paste', async (e) => {
+            const items = e.clipboardData?.items; if (!items) return;
+            for (const item of items) {
+                if (item.type.startsWith('image/')) { const file = item.getAsFile(); if (file) { pendingImageBase64 = await compressImageToBase64(file, 960, 0.84); updateAttachPreviewUI(); } }
+            }
+        });
+        async function toggleVoiceRecording() {
+            const btn = document.getElementById('chatVoiceBtn');
+            if (isRecordingAudio && mediaRecorder) {
+                mediaRecorder.stop(); isRecordingAudio = false; btn.classList.remove('recording'); btn.innerText = '🎙️';
+                document.getElementById('imSubStatus').innerText = '✉️ 通讯 · 语音已就绪，点发送传给 TA'; return;
+            }
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alert('当前环境不支持麦克风录音（需 localhost 或 HTTPS）哦～'); return; }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioChunks = [];
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+                mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+                pendingAudioFormat = (mediaRecorder.mimeType || 'audio/webm').includes('ogg') ? 'ogg' : 'webm';
+                mediaRecorder.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) audioChunks.push(ev.data); };
+                mediaRecorder.onstop = () => {
+                    stream.getTracks().forEach(t => t.stop());
+                    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                    const reader = new FileReader();
+                    reader.onloadend = () => { pendingAudioBase64 = reader.result; updateAttachPreviewUI(); };
+                    reader.readAsDataURL(blob);
+                };
+                mediaRecorder.start(); isRecordingAudio = true; btn.classList.add('recording'); btn.innerText = '⏹️';
+                document.getElementById('imSubStatus').innerText = '🔴 正在录音中... 再点麦克风结束';
+            } catch (err) { alert('无法启动麦克风：' + err.message); }
+        }
+        function toggleChatDrawer() {
+            if (appConfig.soloMode) return;
+            const d = document.getElementById('commDrawer'); d.classList.toggle('open');
+            if (d.classList.contains('open')) { document.getElementById('commUnreadDot').classList.remove('show'); scrollChatToBottom(); setTimeout(() => document.getElementById('imInput').focus(), 200); }
+        }
+        async function loadChatHistory() { try { const r = await fetch(`${API_BASE}/api/chat`); if (r.ok) { chatHistory = (await r.json()).data || []; renderChatMessages(chatHistory); } } catch (e) {} }
+        function renderChatMessages(list) {
+            const box = document.getElementById('imMessagesList');
+            if (!list || !list.length) { box.innerHTML = `<div style="text-align:center;color:#636366;font-size:12px;margin-top:20px;">给正在线上连线的 ${escapeHtml(appConfig.charName || 'TA')} 发条消息、图片或语音吧～</div>`; return; }
+            const cAva = renderAvatarHtml(appConfig.charAvatar, appConfig.charName || 'TA'), uAva = renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我');
+            box.innerHTML = list.map(m => m.role === 'user'
+                ? `<div class="im-bubble-row user"><div class="im-bubble">${renderBubbleInnerHtml(m.content)}</div><div class="bubble-avatar">${uAva}</div></div>`
+                : `<div class="im-bubble-row assistant"><div class="bubble-avatar">${cAva}</div><div class="im-bubble">${renderBubbleInnerHtml(m.content)}</div></div>`
+            ).join('');
+            scrollChatToBottom();
+        }
+        function appendBubble(role, content, isTyping = false) {
+            const box = document.getElementById('imMessagesList');
+            if (!box.querySelector('.im-bubble-row')) box.innerHTML = '';
+            const row = document.createElement('div'); row.className = `im-bubble-row ${role}`;
+            const ava = role === 'user' ? renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我') : renderAvatarHtml(appConfig.charAvatar, appConfig.charName || 'TA');
+            const inner = isTyping ? escapeHtml(content) : renderBubbleInnerHtml(content);
+            row.innerHTML = role === 'user'
+                ? `<div class="im-bubble">${inner}</div><div class="bubble-avatar">${ava}</div>`
+                : `<div class="bubble-avatar">${ava}</div><div class="im-bubble ${isTyping ? 'im-typing' : ''}">${inner}</div>`;
+            box.appendChild(row); scrollChatToBottom(); return row;
+        }
+        function scrollChatToBottom() { const b = document.getElementById('imMessagesList'); b.scrollTop = b.scrollHeight; }
+        async function sendChatMessage() {
+            if (appConfig.soloMode) return;
+            const input = document.getElementById('imInput'), btn = document.getElementById('imSendBtn'), text = input.value.trim();
+            const imgToSend = pendingImageBase64, audToSend = pendingAudioBase64, audFmt = pendingAudioFormat;
+            if (!text && !imgToSend && !audToSend) return;
+            input.value = ''; clearPendingAttachment(); btn.disabled = true;
+            const localPreviewContent = (imgToSend || audToSend) ? JSON.stringify({ __mm: 1, text, imageData: imgToSend, audioData: audToSend }) : text;
+            chatHistory.push({ role: 'user', content: localPreviewContent }); appendBubble('user', localPreviewContent);
+            document.getElementById('imSubStatus').innerText = '对方正在输入...';
+            const typing = appendBubble('assistant', '• • •', true);
+            try {
+                const res = await fetch(`${API_BASE}/api/chat`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: text, imageData: imgToSend, audioData: audToSend, audioFormat: audFmt,
+                        ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary()
+                    })
+                });
+                const data = await res.json(); typing.remove(); if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
+                chatHistory.push(data.replyMsg); appendBubble('assistant', data.replyMsg.content);
+            } catch (e) { typing.remove(); appendBubble('assistant', `⚠️ ${e.message}`); }
+            finally { btn.disabled = false; document.getElementById('imSubStatus').innerText = '✉️ 通讯 · 线上自习室连线中'; input.focus(); }
+        }
+        function openClearChatModal() {
+            const name = appConfig.charName || 'TA';
+            document.getElementById('clearChatModalDesc').innerText = `要如何清理与【${name}】的记录呢？如果只是手滑点到了垃圾桶，直接点最下面取消就行～`;
+            document.getElementById('clearChatModal').classList.add('open');
+        }
+        async function executeClearChat(syncAll) {
+            closeModal('clearChatModal');
+            const name = appConfig.charName || 'TA';
+            await fetch(`${API_BASE}/api/chat?syncMemory=${syncAll ? 'true' : 'false'}`, { method: 'DELETE' });
+            chatHistory = []; renderChatMessages([]);
+            showCommBanner(syncAll ? '🧹 已彻底重置' : '🫧 已清空气泡', syncAll ? `【${name}】的通讯气泡与全网页连续记忆已归零～` : `通讯气泡已清空，【${name}】仍记得之前的互动哦～`, false);
+        }
+
+        // 📷 桌面相框小组件（单次识图 + <memo> 记忆回填！）
+        function openWidgetModal() {
+            document.getElementById('widgetImageFile').value = '';
+            document.getElementById('widgetCaptionInput').value = '';
+            document.getElementById('widgetVisibleToAI').checked = false;
+            document.getElementById('widgetModal').classList.add('open');
+        }
+        function compressImageToBase64(file, maxW = 800, q = 0.82) {
+            return new Promise((resolve, reject) => {
+                const r = new FileReader();
+                r.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        let w = img.width, h = img.height; if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+                        const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
+                        resolve(c.toDataURL('image/jpeg', q));
+                    };
+                    img.onerror = reject; img.src = e.target.result;
+                };
+                r.onerror = reject; r.readAsDataURL(file);
+            });
+        }
+        async function observeWidgetOnce(widgetObj) {
+            if (!widgetObj?.id || appConfig.soloMode) return;
+            showCommBanner('👁️ 正在给 ' + (appConfig.charName || 'TA') + ' 看桌面相框', '单次传图识图并写入 <memo> 画面记忆中...', false);
+            try {
+                const res = await fetch(`${API_BASE}/api/widgets/${widgetObj.id}/observe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '识图失败');
+                widgetObj.ai_memo = data.ai_memo || widgetObj.ai_memo || '';
+                widgetObj.visible_to_ai = 1;
+                renderWidget();
+                if (data.reaction) {
+                    showCommBanner(`👁️ ${appConfig.charName || 'TA'} 看到了你的相框`, data.reaction, false);
+                } else if (data.warning) {
+                    showCommBanner('👁️ 已同步相框备注', data.warning, false);
+                } else if (data.cached) {
+                    showCommBanner('✨ TA 已经记住这张图啦', '直接复用 <memo> 记忆，本次 0 Token 消耗～', false);
+                }
+            } catch (e) {
+                showCommBanner('⚠️ 相框识图失败', e.message, false);
+            }
+        }
+        async function uploadWidgetPhoto() {
+            const f = document.getElementById('widgetImageFile'); if (!f.files?.[0]) { alert('请先选一张图片哦～'); return; }
+            const imgData = await compressImageToBase64(f.files[0]);
+            const caption = document.getElementById('widgetCaptionInput').value.trim();
+            const wantVisible = !appConfig.soloMode && document.getElementById('widgetVisibleToAI').checked;
+            const data = await (await fetch(`${API_BASE}/api/widgets`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_data: imgData, caption, visible_to_ai: wantVisible ? 1 : 0 })
+            })).json();
+            closeModal('widgetModal');
+            if (data.widget) {
+                widgetPhotos.unshift(data.widget); currentWidgetIdx = 0; renderWidget();
+                if (wantVisible) await observeWidgetOnce(data.widget);
+            }
+        }
+        async function loadWidgets() { try { widgetPhotos = (await (await fetch(`${API_BASE}/api/widgets`)).json()).data || []; currentWidgetIdx = 0; renderWidget(); } catch (e) {} }
+        function renderWidget() {
+            const box = document.getElementById('widgetContentArea');
+            const del = document.getElementById('deleteWidgetBtn');
+            const visBtn = document.getElementById('toggleWidgetVisBtn');
+            if (!widgetPhotos.length) {
+                del.style.display = 'none'; visBtn.style.display = 'none';
+                box.innerHTML = `<div class="widget-empty-placeholder" onclick="event.stopPropagation();openWidgetModal();"><span style="font-size:24px;">🖼️</span><span>桌面相框小组件<br>点这里放一张喜欢的图吧</span></div>`;
+                return;
+            }
+            del.style.display = 'inline-block';
+            const item = widgetPhotos[currentWidgetIdx % widgetPhotos.length];
+            const isVis = Boolean(item.visible_to_ai);
+            const hasMemo = Boolean(item.ai_memo);
+            visBtn.style.display = appConfig.soloMode ? 'none' : 'inline-block';
+            visBtn.classList.toggle('vis-on', isVis);
+            visBtn.innerText = isVis ? (hasMemo ? '✨ TA已记住' : '👁️ TA可见') : '🙈 仅自己看';
+            visBtn.title = isVis && hasMemo ? `画面记忆：${item.ai_memo}（点击可隐藏）` : '点击切换是否对 TA 公开这张相框图';
+
+            const dots = widgetPhotos.length > 1 ? `<div class="widget-dots">${widgetPhotos.map((_, i) => `<span class="widget-dot ${i === currentWidgetIdx ? 'active' : ''}"></span>`).join('')}</div>` : '';
+            const visTag = (!appConfig.soloMode && isVis) ? '👁️ ' : '';
+            box.innerHTML = `<img src="${item.image_data}" alt="桌面小组件"><div class="widget-caption-bar"><span class="widget-caption-text">${visTag}${escapeHtml(item.caption || '')}</span>${dots}</div>`;
+        }
+        async function toggleCurrentWidgetVisibility() {
+            if (!widgetPhotos.length) return;
+            const item = widgetPhotos[currentWidgetIdx % widgetPhotos.length];
+            const nextVis = item.visible_to_ai ? 0 : 1;
+            item.visible_to_ai = nextVis;
+            renderWidget();
+            if (nextVis === 1) {
+                if (!item.ai_memo) {
+                    await observeWidgetOnce(item);
+                } else {
+                    await fetch(`${API_BASE}/api/widgets/${item.id}/visibility`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible_to_ai: 1 }) });
+                    showCommBanner('✨ 已重新展示给 TA', '直接复用已存的画面记忆，0 Token 消耗～', false);
+                }
+            } else {
+                await fetch(`${API_BASE}/api/widgets/${item.id}/visibility`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible_to_ai: 0 }) });
+                showCommBanner('🙈 已设为仅自己可见', '当前对话将不再带入这张相框图的记忆～', false);
+            }
+        }
+        function cycleWidgetPhoto() { if (widgetPhotos.length <= 1) return; currentWidgetIdx = (currentWidgetIdx + 1) % widgetPhotos.length; renderWidget(); }
+        async function deleteCurrentWidget() {
+            if (!widgetPhotos.length) return; const t = widgetPhotos[currentWidgetIdx]; widgetPhotos.splice(currentWidgetIdx, 1); currentWidgetIdx = 0; renderWidget();
+            if (t?.id) await fetch(`${API_BASE}/api/widgets/${t.id}`, { method: 'DELETE' });
+        }
+
+        // 📖 分页阅读器 + 📚 可视化书架 + 原文高亮 + 偷看博弈
+        const workspace = document.getElementById('workspace');
+        function expandReader() {
+            workspace.classList.add('reader-open');
+            if (window.innerWidth <= 1020) requestAnimationFrame(() => document.getElementById('readerContainer')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        }
+        function collapseReader() { workspace.classList.remove('reader-open'); hideSelectionPopover(); }
+        document.getElementById('bookWidget').addEventListener('click', expandReader);
+        document.getElementById('closeReader').addEventListener('click', collapseReader);
+
+        async function openBookshelfModal() {
+            document.getElementById('bookshelfModal').classList.add('open');
+            await refreshBookshelfList();
+        }
+        async function refreshBookshelfList() {
+            const box = document.getElementById('bookshelfList');
+            const tempBanner = document.getElementById('tempBookSaveBanner');
+            if (tempBanner) {
+                if (currentBookId && !currentBookSavedToShelf) {
+                    tempBanner.style.display = 'block';
+                    const nameSpan = document.getElementById('tempBookNameSpan');
+                    if (nameSpan) nameSpan.innerText = document.getElementById('bookTitle').innerText;
+                } else {
+                    tempBanner.style.display = 'none';
+                }
+            }
+
+            try {
+                const res = await (await fetch(`${API_BASE}/api/books`)).json();
+                const list = res.data || [];
+                const summaryEl = document.getElementById('bookshelfSummaryText');
+                if (summaryEl) summaryEl.innerText = `共收藏 ${list.length} 本书 · 独立存于 data/library/books.db`;
+                if (!box) return;
+                if (!list.length) {
+                    box.innerHTML = `<div style="text-align:center;color:#78716c;font-size:12.5px;padding:24px 0;">书架空空的～导入 TXT/PDF 或粘贴文章收藏吧 📖</div>`;
+                    return;
+                }
+                box.innerHTML = list.map(b => {
+                    const isCur = b.id === currentBookId;
+                    const lenText = b.char_count >= 10000
+                        ? `${(b.char_count / 10000).toFixed(1)}万字`
+                        : `${b.char_count || 0}字`;
+                    return `<div onclick="openBookFromShelf(${b.id})" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-radius:12px;background:${isCur ? 'rgba(217,119,6,0.18)' : '#181715'};border:1px solid ${isCur ? 'var(--accent)' : '#33302d'};cursor:pointer;margin-bottom:8px;transition:all 0.2s;">
+                        <div style="min-width:0;flex:1;">
+                            <div style="font-size:13.5px;font-weight:600;color:#f5f5f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isCur ? '📖 ' : ''}${escapeHtml(b.title)}</div>
+                            <div style="font-size:11px;color:#a8a29e;margin-top:3px;">${lenText} · ${b.highlight_count || 0} 条划线批注${isCur ? ' · 正在阅读' : ''}</div>
+                        </div>
+                        <button type="button" class="mini-btn" style="padding:4px 8px;color:#fca5a5;border-color:rgba(239,68,68,0.35);" onclick="deleteBookFromShelf(${b.id}, event)" title="从书架删除">🗑️</button>
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                if (box) box.innerHTML = `<div style="color:#f87171;font-size:12px;padding:16px 0;text-align:center;">书架加载失败：${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        async function saveCurrentTempBookToShelf() {
+            if (!currentBookId) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/books/${currentBookId}/shelf`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ saved_to_shelf: true })
+                });
+                if (res.ok) {
+                    currentBookSavedToShelf = true;
+                    await refreshBookshelfList();
+                    showCommBanner('📚 已收入书架', `《${document.getElementById('bookTitle').innerText}》已永久保存到书架～`, false);
+                }
+            } catch (e) {}
+        }
+
+        async function openBookFromShelf(id) {
+            try {
+                const res = await fetch(`${API_BASE}/api/books/${id}`);
+                const data = await res.json();
+                if (!res.ok || !data.book) throw new Error(data.message || '打开失败');
+                renderBook(data.book);
+                await loadHighlights();
+                closeModal('bookshelfModal');
+                expandReader();
+            } catch (e) { showCommBanner('⚠️ 打开失败', e.message, false); }
+        }
+
+        async function deleteBookFromShelf(id, event) {
+            if (event) event.stopPropagation();
+            if (!confirm('确定要从书架删除这本书及其所有划线批注吗？')) return;
+            try {
+                await fetch(`${API_BASE}/api/books/${id}`, { method: 'DELETE' });
+                if (id === currentBookId) {
+                    const latest = await (await fetch(`${API_BASE}/api/books/latest`)).json();
+                    if (latest.book) renderBook(latest.book);
+                    else renderBook(DEFAULT_SAMPLE_BOOK);
+                    await loadHighlights();
+                }
+                await refreshBookshelfList();
+            } catch (e) { showCommBanner('⚠️ 删除失败', e.message, false); }
+        }
+
+        function getActiveWidgetId() {
+            if (typeof widgetPhotos === 'undefined' || !widgetPhotos.length) return null;
+            const cur = widgetPhotos[currentWidgetIdx % widgetPhotos.length];
+            return (cur && cur.visible_to_ai) ? cur.id : null;
+        }
+
+        function paginateBookContent(content, charsPerPage = 950) {
+            const paragraphs = String(content || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            if (!paragraphs.length) return [['（暂无正文内容）']];
+            const pages = []; let curPage = [], curLen = 0;
+            for (const p of paragraphs) {
+                if (curPage.length > 0 && curLen + p.length > charsPerPage) { pages.push(curPage); curPage = [p]; curLen = p.length; }
+                else { curPage.push(p); curLen += p.length; }
+            }
+            if (curPage.length) pages.push(curPage);
+            return pages;
+        }
+        function getBookPageStorageKey() { return `study_room_page_idx_${currentBookId || 'sample'}`; }
+
+        function renderParagraphWithMarks(plainText) {
+            let segments = [{ text: plainText, hid: null, shared: 0 }];
+            for (const h of highlightsList) {
+                const needle = (h.text_content || '').trim();
+                if (needle.length < 2) continue;
+                const next = [];
+                for (const seg of segments) {
+                    if (seg.hid !== null) { next.push(seg); continue; }
+                    const idx = seg.text.indexOf(needle);
+                    if (idx === -1) { next.push(seg); continue; }
+                    if (idx > 0) next.push({ text: seg.text.slice(0, idx), hid: null, shared: 0 });
+                    next.push({ text: seg.text.slice(idx, idx + needle.length), hid: h.id, shared: h.is_shared });
+                    if (idx + needle.length < seg.text.length) next.push({ text: seg.text.slice(idx + needle.length), hid: null, shared: 0 });
+                }
+                segments = next;
+            }
+            return segments.map(s => s.hid === null
+                ? escapeHtml(s.text)
+                : `<mark class="book-mark ${s.shared ? 'shared' : 'private'}" data-hid="${s.hid}" onclick="focusMarginCard(${s.hid}, event)" title="点击定位到对应批注">${escapeHtml(s.text)}</mark>`
+            ).join('');
+        }
+
+        function renderCurrentBookPage(scrollToTop = true) {
+            const total = Math.max(1, bookPages.length);
+            currentPageIdx = Math.max(0, Math.min(total - 1, currentPageIdx));
+            localStorage.setItem(getBookPageStorageKey(), String(currentPageIdx));
+            const contentEl = document.getElementById('readerContent');
+            contentEl.innerHTML = (bookPages[currentPageIdx] || []).map(p => `<p>${renderParagraphWithMarks(p)}</p>`).join('');
+            if (scrollToTop) contentEl.scrollTop = 0;
+            document.getElementById('totalPagesSpan').innerText = String(total);
+            document.getElementById('pageJumpInput').value = String(currentPageIdx + 1);
+            document.getElementById('pageJumpInput').max = String(total);
+            document.getElementById('prevPageBtn').disabled = currentPageIdx <= 0;
+            document.getElementById('nextPageBtn').disabled = currentPageIdx >= total - 1;
+        }
+        function turnPage(delta) {
+            const target = currentPageIdx + delta;
+            if (target < 0 || target >= bookPages.length) return;
+            currentPageIdx = target; hideSelectionPopover(); renderCurrentBookPage(true);
+        }
+        function jumpToPageInput(val) {
+            const p = parseInt(val, 10);
+            if (isNaN(p)) { renderCurrentBookPage(false); return; }
+            currentPageIdx = Math.max(0, Math.min(bookPages.length - 1, p - 1));
+            renderCurrentBookPage(true);
+        }
+        function locateHighlightInBook(id) {
+            const h = highlightsList.find(x => x.id === id); if (!h) return;
+            const needle = (h.text_content || '').trim();
+            const pageIdx = bookPages.findIndex(paras => paras.some(p => p.includes(needle)));
+            if (pageIdx !== -1 && pageIdx !== currentPageIdx) { currentPageIdx = pageIdx; renderCurrentBookPage(false); }
+            requestAnimationFrame(() => {
+                const mark = document.querySelector(`.book-mark[data-hid="${id}"]`);
+                if (mark) { mark.scrollIntoView({ behavior: 'smooth', block: 'center' }); mark.classList.remove('pulse'); void mark.offsetWidth; mark.classList.add('pulse'); }
+            });
+        }
+        function focusMarginCard(id, event) {
+            if (event) event.stopPropagation();
+            document.querySelectorAll('.margin-card.active-focus').forEach(el => el.classList.remove('active-focus'));
+            const card = document.querySelector(`.margin-card[data-cid="${id}"]`);
+            if (card) { card.classList.add('active-focus'); card.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => card.classList.remove('active-focus'), 2200); }
+        }
+
+        async function loadLatestBook() { try { const d = await (await fetch(`${API_BASE}/api/books/latest`)).json(); if (d.book) renderBook(d.book); } catch (e) {} }
+        function renderBook(book) {
+            currentBookId = book.id;
+            currentBookSavedToShelf = book.saved_to_shelf !== 0;
+            document.getElementById('bookTitle').innerText = book.title;
+            document.getElementById('widgetBookTitle').innerText = `《${book.title}》`;
+            bookPages = paginateBookContent(book.content);
+            const savedPage = parseInt(localStorage.getItem(getBookPageStorageKey()) || '0', 10) || 0;
+            currentPageIdx = Math.max(0, Math.min(bookPages.length - 1, savedPage));
+            renderCurrentBookPage(true);
+        }
+
+        async function extractTextFromPdfBuffer(arrayBuffer) {
+            if (!window.pdfjsLib) throw new Error('PDF 解析组件未加载完成，请稍后重试');
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const maxPages = Math.min(pdf.numPages, 220), pageTexts = [];
+            for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+                const page = await pdf.getPage(pageNum), textContent = await page.getTextContent();
+                const lines = []; let currentLine = '', lastY = null;
+                for (const item of textContent.items) {
+                    const str = item.str || '', y = item.transform ? item.transform[5] : null;
+                    if (lastY !== null && y !== null && Math.abs(y - lastY) > 6) { if (currentLine.trim()) lines.push(currentLine.trim()); currentLine = str; }
+                    else { currentLine += str; }
+                    lastY = y;
+                }
+                if (currentLine.trim()) lines.push(currentLine.trim());
+                if (lines.length) pageTexts.push(lines.join('\n'));
+            }
+            return pageTexts.join('\n\n');
+        }
+        function handleFileImport(event) {
+            const f = event.target.files[0]; if (!f) return;
+            const btn = document.getElementById('importBookBtn'), isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+            const r = new FileReader();
+            r.onload = async (e) => {
+                try {
+                    if (btn) { btn.disabled = true; btn.innerText = '⏳ 解析中...'; }
+                    let text = '';
+                    if (isPdf) text = await extractTextFromPdfBuffer(e.target.result);
+                    else { try { text = new TextDecoder('utf-8', { fatal: true }).decode(e.target.result); } catch { text = new TextDecoder('gbk').decode(e.target.result); } }
+                    if (!text.trim()) throw new Error('未能提取到有效文字（纯扫描图片 PDF 暂无法直接提取文本）');
+                    const cleanName = f.name.replace(/\.(txt|md|pdf)$/i, '');
+                    const saveToShelf = confirm(`已解析《${cleanName}》！\n\n点【确定】：保存到书架方便下次继续读\n点【取消】：仅本次临时阅读（不占书架）`);
+                    await saveAndOpenBook(cleanName, text.slice(0, 150000), saveToShelf);
+                } catch (err) { alert('电子书导入失败：' + err.message); }
+                finally { if (btn) { btn.disabled = false; btn.innerText = '📂 导入TXT/PDF'; } event.target.value = ''; }
+            };
+            r.readAsArrayBuffer(f);
+        }
+        function openPasteBookModal() { document.getElementById('pasteBookModal').classList.add('open'); }
+        async function submitPasteBook() {
+            const title = document.getElementById('pasteBookTitle').value.trim() || '未命名读物';
+            const content = document.getElementById('pasteBookContent').value.trim();
+            if (!content) return;
+            const saveChk = document.getElementById('pasteBookSaveToShelf');
+            const saveToShelf = saveChk ? saveChk.checked : true;
+            await saveAndOpenBook(title, content, saveToShelf);
+            closeModal('pasteBookModal');
+        }
+        async function saveAndOpenBook(title, content, saveToShelf = true) {
+            const d = await (await fetch(`${API_BASE}/api/books`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, content, save_to_shelf: saveToShelf })
+            })).json();
+            if (d.book) {
+                renderBook(d.book);
+                await loadHighlights();
+                showCommBanner(saveToShelf ? '📚 已存入书架' : '📄 临时阅读模式', `正在阅读《${d.book.title}》`, false);
+            }
+        }
+
+        // 📱 兼容电脑与手机拖选的划词捕获
+        const readerContentEl = document.getElementById('readerContent'), selectionPopover = document.getElementById('selectionPopover');
+        function hideSelectionPopover() { selectionPopover.classList.remove('show'); }
+        function checkTextSelection() {
+            if (!workspace.classList.contains('reader-open')) { hideSelectionPopover(); return; }
+            const sel = window.getSelection();
+            const text = sel ? sel.toString().trim() : '';
+            if (text.length >= 2 && text.length <= 360 && sel.rangeCount > 0 && readerContentEl.contains(sel.anchorNode)) {
+                selectedQuote = text;
+                if (window.innerWidth > 768) {
+                    const rect = sel.getRangeAt(0).getBoundingClientRect();
+                    selectionPopover.style.left = `${Math.max(165, Math.min(window.innerWidth - 165, rect.left + rect.width / 2))}px`;
+                    selectionPopover.style.top = `${Math.max(66, rect.top)}px`;
+                }
+                selectionPopover.classList.add('show');
+            } else { hideSelectionPopover(); }
+        }
+        readerContentEl.addEventListener('mouseup', () => setTimeout(checkTextSelection, 15));
+        document.addEventListener('selectionchange', () => {
+            clearTimeout(selectionDebounceTimer);
+            selectionDebounceTimer = setTimeout(checkTextSelection, 200);
+        });
+        document.addEventListener('mousedown', (e) => { if (!selectionPopover.contains(e.target)) hideSelectionPopover(); });
+        document.addEventListener('touchstart', (e) => { if (!selectionPopover.contains(e.target) && !readerContentEl.contains(e.target)) hideSelectionPopover(); }, { passive: true });
+
+        async function submitHighlightDirect(shareWithAI) {
+            if (!selectedQuote) return;
+            const wantShare = !appConfig.soloMode && shareWithAI;
+            const quote = selectedQuote; hideSelectionPopover(); window.getSelection()?.removeAllRanges();
+            if (wantShare && !isFocusing) showCommBanner('📤 已分享给 ' + (appConfig.charName || 'TA'), '正在等 TA 看完写页边批注...', false);
+            try {
+                const res = await fetch(`${API_BASE}/api/highlights`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text_content: quote, book_id: currentBookId, book_title: document.getElementById('bookTitle').innerText, user_note: '', share_with_ai: wantShare, isFocusing })
+                });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '保存失败');
+                await loadHighlights();
+                if (wantShare && !isFocusing && data.ai_comment) showCommBanner(`✒️ ${appConfig.charName || 'TA'} 写下了页边批注`, data.ai_comment, false);
+                else if (wantShare && isFocusing) showCommBanner('🔒 已锁入保险箱', `${appConfig.charName || 'TA'} 正在偷偷写批注，专注结束后显影～`, false);
+            } catch (e) { showCommBanner('⚠️ 操作失败', e.message, false); }
+        }
+
+        function openHighlightNoteModal(defaultShare, existingId = null) {
+            editingHighlightId = existingId;
+            if (existingId) {
+                const item = highlightsList.find(x => x.id === existingId); if (!item) return;
+                document.getElementById('hlQuotePreview').innerText = `“${item.text_content}”`;
+                document.getElementById('hlUserNoteInput').value = item.user_note || '';
+                document.getElementById('hlModalTitle').innerText = '✏️ 编辑你的备注';
+            } else {
+                if (!selectedQuote) return; hideSelectionPopover(); window.getSelection()?.removeAllRanges();
+                document.getElementById('hlQuotePreview').innerText = `“${selectedQuote}”`;
+                document.getElementById('hlUserNoteInput').value = '';
+                document.getElementById('hlModalTitle').innerText = (defaultShare && !appConfig.soloMode) ? '💬 写批注并分享给 TA' : '📝 写下私人读书笔记';
+            }
+            document.getElementById('highlightNoteModal').classList.add('open');
+            setTimeout(() => document.getElementById('hlUserNoteInput').focus(), 80);
+        }
+
+        async function submitHighlightFromModal(shareWithAI) {
+            const wantShare = !appConfig.soloMode && shareWithAI;
+            const noteText = document.getElementById('hlUserNoteInput').value.trim();
+            closeModal('highlightNoteModal');
+            try {
+                if (editingHighlightId) {
+                    const id = editingHighlightId; editingHighlightId = null;
+                    if (wantShare) {
+                        if (!isFocusing) showCommBanner('📤 已分享给 ' + (appConfig.charName || 'TA'), 'TA 正在看你的批注并写回应...', false);
+                        const res = await fetch(`${API_BASE}/api/highlights/${id}/share`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_note: noteText, book_title: document.getElementById('bookTitle').innerText, isFocusing }) });
+                        const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '分享失败');
+                        await loadHighlights();
+                        if (!isFocusing && data.ai_comment) showCommBanner(`✒️ ${appConfig.charName || 'TA'} 回应了你的批注`, data.ai_comment, false);
+                    } else {
+                        await fetch(`${API_BASE}/api/highlights/${id}/note`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_note: noteText }) });
+                        await loadHighlights();
+                    }
+                    return;
+                }
+                const quote = selectedQuote; if (!quote) return;
+                if (wantShare && !isFocusing) showCommBanner('📤 已分享给 ' + (appConfig.charName || 'TA'), 'TA 正在看你的划线与批注...', false);
+                const res = await fetch(`${API_BASE}/api/highlights`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text_content: quote, book_id: currentBookId, book_title: document.getElementById('bookTitle').innerText, user_note: noteText, share_with_ai: wantShare, isFocusing })
+                });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '保存失败');
+                await loadHighlights();
+                if (wantShare && !isFocusing && data.ai_comment) showCommBanner(`✒️ ${appConfig.charName || 'TA'} 写下了页边批注`, data.ai_comment, false);
+                else if (wantShare && isFocusing) showCommBanner('🔒 已锁入保险箱', `${appConfig.charName || 'TA'} 正在偷偷写批注，专注结束后显影～`, false);
+            } catch (e) { showCommBanner('⚠️ 操作失败', e.message, false); }
+        }
+
+        async function shareExistingHighlight(id) {
+            if (appConfig.soloMode) return;
+            if (!isFocusing) showCommBanner('📤 已分享给 ' + (appConfig.charName || 'TA'), 'TA 正在看这条划线并写批注...', false);
+            try {
+                const res = await fetch(`${API_BASE}/api/highlights/${id}/share`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_title: document.getElementById('bookTitle').innerText, isFocusing }) });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '分享失败');
+                await loadHighlights();
+                if (!isFocusing && data.ai_comment) showCommBanner(`✒️ ${appConfig.charName || 'TA'} 写下了页边批注`, data.ai_comment, false);
+                else if (isFocusing) showCommBanner('🔒 已锁入保险箱', `${appConfig.charName || 'TA'} 正在偷偷写批注，专注结束后显影～`, false);
+            } catch (e) { showCommBanner('⚠️ 分享失败', e.message, false); }
+        }
+
+        function updatePeekBtnUI() {
+            const btn = document.getElementById('peekUnlockBtn'); if (!btn) return;
+            const hasLocked = highlightsList.some(h => h.is_shared && h.status === 'locked');
+            if (!hasLocked || appConfig.soloMode) { btn.style.display = 'none'; return; }
+            btn.style.display = 'inline-block';
+            btn.innerText = isFocusing ? '👀 请求偷看' : '🔓 解锁批注';
+        }
+        async function requestPeekOrUnlock() { await unlockHighlightsOnly(false, false); }
+        async function unlockHighlightsOnly(force = false, openReaderAfter = false) {
+            const btn = document.getElementById('peekUnlockBtn');
+            if (btn && !force && isFocusing) { btn.disabled = true; btn.innerText = '请示中...'; }
+            try {
+                const res = await fetch(`${API_BASE}/api/highlights/unlock`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ isFocusing, remainingMinutes: Math.ceil(remainingSeconds / 60), force, book_id: currentBookId, deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
+                });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '解锁请求失败');
+                highlightsList = data.data || []; renderHighlights(highlightsList); renderCurrentBookPage(false);
+                if (!force && isFocusing) {
+                    if (data.approved) showCommBanner(`🔓 ${appConfig.charName || 'TA'} 准你偷看啦`, data.reason || '批注已解锁显影～', false);
+                    else { if (btn) { btn.classList.add('rejected'); setTimeout(() => btn.classList.remove('rejected'), 1400); } showCommBanner(`🙈 ${appConfig.charName || 'TA'} 拒绝了偷看`, data.reason || '专注完再看哦～', false); }
+                }
+                if (openReaderAfter) expandReader();
+            } catch (e) { if (!appConfig.soloMode) showCommBanner('⚠️ 无法连线到 TA', e.message, false); }
+            finally { if (btn) { btn.disabled = false; updatePeekBtnUI(); } }
+        }
+
+        async function loadHighlights() {
+            try {
+                const url = currentBookId ? `${API_BASE}/api/highlights?book_id=${currentBookId}` : `${API_BASE}/api/highlights`;
+                highlightsList = (await (await fetch(url)).json()).data || [];
+                renderHighlights(highlightsList); renderCurrentBookPage(false);
+            } catch (e) {}
+        }
+        async function deleteHighlight(id) { if ((await fetch(`${API_BASE}/api/highlights/${id}`, { method: 'DELETE' })).ok) await loadHighlights(); }
+        function renderHighlights(list) {
+            document.getElementById('highlightCountBadge').innerText = list.length;
+            updatePeekBtnUI();
+            const box = document.getElementById('marginNotesList');
+            if (!list.length) {
+                box.innerHTML = appConfig.soloMode
+                    ? `<div style="color:var(--paper-muted);font-size:12px;margin-top:20px;line-height:1.6;">拖选任意句子即可：<br>🔖 划线收藏 · 📝 记个人读书笔记～</div>`
+                    : `<div style="color:var(--paper-muted);font-size:12px;margin-top:20px;line-height:1.6;">拖选任意句子即可：<br>🔖 仅划线 · 📝 写笔记 · 📤 分享给 TA～</div>`;
+                return;
+            }
+            const isNightPaper = document.getElementById('paperTexture')?.classList.contains('theme-night');
+            box.innerHTML = list.map(item => {
+                let ink = item.ink_color || appConfig.inkColor || '#1c1917';
+                if (isNightPaper && getLuminance(ink) < 0.35) ink = '#e7e5e4';
+                const userNoteHtml = item.user_note ? `<div class="margin-user-note">📝 <strong>我的备注：</strong>${escapeHtml(item.user_note)}</div>` : '';
+                let aiBlockHtml = '';
+                if (item.is_shared) {
+                    aiBlockHtml = item.status === 'locked'
+                        ? `<div class="margin-locked">🔒 ${escapeHtml(appConfig.charName || 'TA')} 已写下批注，专注结束后显影</div>`
+                        : `<div class="margin-reply" style="color:${ink}">${escapeHtml(item.ai_comment || '（TA 正在组织语言，稍等刷新一下～）')}</div>`;
+                }
+                const shareBtnHtml = appConfig.soloMode ? '' : `<button class="margin-mini-act" onclick="shareExistingHighlight(${item.id})">📤 分享给TA</button>`;
+                const footerHtml = item.is_shared
+                    ? `<div class="margin-card-footer"><span class="margin-tag">📤 已与 ${escapeHtml(appConfig.charName || 'TA')} 共读</span><button class="margin-mini-act" onclick="locateHighlightInBook(${item.id})">📍 定位原文</button></div>`
+                    : `<div class="margin-card-footer"><span class="margin-tag">🔖 仅自己可见</span><div style="display:flex;gap:4px;"><button class="margin-mini-act" onclick="openHighlightNoteModal(false, ${item.id})">✏️ 备注</button>${shareBtnHtml}</div></div>`;
+                return `<div class="margin-card" data-cid="${item.id}"><button class="margin-del-btn" onclick="deleteHighlight(${item.id})" title="删除">✕</button><div class="margin-quote" onclick="locateHighlightInBook(${item.id})" title="点击跳转到原文位置">“${escapeHtml(item.text_content)}”</div>${userNoteHtml}${aiBlockHtml}${footerHtml}</div>`;
+            }).join('');
+        }
+
+        // 📌 双向书桌便利贴（含把单人便签补发给 TA 看！）
+        function openUserNoteModal() {
+            document.getElementById('userStickyInput').value = '';
+            document.getElementById('userNoteModal').classList.add('open');
+            setTimeout(() => document.getElementById('userStickyInput').focus(), 80);
+        }
+        async function submitUserStickyNote(askReply) {
+            const wantReply = !appConfig.soloMode && askReply;
+            const text = document.getElementById('userStickyInput').value.trim();
+            if (!text) return;
+            closeModal('userNoteModal');
+            document.getElementById('emptyNoteText').style.display = 'none';
+            const noteEl = document.getElementById('stickyNote');
+            applyStickyNoteStyle(noteEl, appConfig.noteColor || '#fef08a');
+            noteEl.classList.add('show');
+            document.getElementById('noteContent').innerText = wantReply ? `📌 已贴上纸条，正等 ${appConfig.charName || 'TA'} 回贴...` : text;
+            try {
+                const res = await fetch(`${API_BASE}/api/notes/user`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: text, askReply: wantReply, ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
+                });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '贴条失败');
+                if (data.userNote) notesList.unshift(data.userNote);
+                if (data.aiNote) notesList.unshift(data.aiNote);
+                currentNoteIdx = 0; renderNotes();
+            } catch (e) { showCommBanner('⚠️ 贴条失败', e.message, false); renderNotes(); }
+        }
+        async function shareCurrentNoteToAI() {
+            if (appConfig.soloMode || !notesList.length) return;
+            const cur = notesList[currentNoteIdx];
+            if (!cur || !cur.id) return;
+            showCommBanner('💌 已把这张便签递给 ' + (appConfig.charName || 'TA'), '正在等 TA 写回条...', false);
+            try {
+                const res = await fetch(`${API_BASE}/api/notes/${cur.id}/share`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
+                });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '递条失败');
+                if (data.aiNote) { notesList.unshift(data.aiNote); currentNoteIdx = 0; renderNotes(); }
+            } catch (e) { showCommBanner('⚠️ 递条失败', e.message, false); }
+        }
+        async function summonAINote() {
+            if (appConfig.soloMode) return;
+            const btn = document.getElementById('summonNoteBtn');
+            btn.disabled = true; btn.innerText = '✍️ 写条中...';
+            document.getElementById('emptyNoteText').style.display = 'none';
+            const noteEl = document.getElementById('stickyNote');
+            applyStickyNoteStyle(noteEl, appConfig.noteColor || '#fef08a');
+            noteEl.classList.add('show');
+            document.getElementById('noteContent').innerText = `✨ ${appConfig.charName || 'TA'} 正在撕下一张便签写字...`;
+            try {
+                const res = await fetch(`${API_BASE}/api/notes/summon`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
+                });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '召唤失败');
+                if (data.note) { notesList.unshift(data.note); currentNoteIdx = 0; renderNotes(); }
+            } catch (e) {
+                document.getElementById('noteContent').innerText = `⚠️ ${e.message}`;
+            } finally { btn.disabled = false; btn.innerText = '✨ 戳TA'; }
+        }
+
+        let hiddenTime = null;
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) hiddenTime = Date.now();
+            else if (hiddenTime) {
+                const s = Math.floor((Date.now() - hiddenTime) / 1000); hiddenTime = null;
+                if (!appConfig.soloMode && isFocusing && s >= 15) triggerSlackAlert(s);
+            }
+        });
+        function simulateRandomSlack() { if (!appConfig.soloMode) triggerSlackAlert(Math.floor(Math.random() * 100) + 20); }
+        async function triggerSlackAlert(awayDuration) {
+            if (appConfig.soloMode) return;
+            document.getElementById('emptyNoteText').style.display = 'none';
+            const noteEl = document.getElementById('stickyNote');
+            applyStickyNoteStyle(noteEl, appConfig.noteColor || '#fef08a');
+            noteEl.classList.add('show');
+            document.getElementById('noteContent').innerText = `👀 发现你切屏离开了 ${awayDuration} 秒，${appConfig.charName || 'TA'} 正在贴条子...`;
+            try {
+                const res = await fetch(`${API_BASE}/api/notes/slack`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ awayDuration, deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
+                });
+                const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
+                if (data.note) { notesList.unshift(data.note); currentNoteIdx = 0; renderNotes(); }
+            } catch (e) { document.getElementById('noteContent').innerText = `⚠️ 贴条失败：${e.message}`; }
+        }
+        async function loadNotes() {
+            try { notesList = (await (await fetch(`${API_BASE}/api/notes`)).json()).data || []; currentNoteIdx = 0; renderNotes(); } catch (e) {}
+        }
+        function shiftNote(delta) {
+            if (notesList.length <= 1) return;
+            currentNoteIdx = (currentNoteIdx + delta + notesList.length) % notesList.length;
+            renderNotes();
+        }
+        function renderNotes() {
+            const noteEl = document.getElementById('stickyNote'), emptyEl = document.getElementById('emptyNoteText'), pager = document.getElementById('notePager');
+            if (!notesList.length) { noteEl.classList.remove('show'); emptyEl.style.display = 'block'; return; }
+            currentNoteIdx = Math.max(0, Math.min(notesList.length - 1, currentNoteIdx));
+            const cur = notesList[currentNoteIdx];
+            emptyEl.style.display = 'none';
+            applyStickyNoteStyle(noteEl, cur.note_color || appConfig.noteColor || '#fef08a');
+            noteEl.classList.toggle('from-user', cur.author === 'user');
+            document.getElementById('noteContent').innerText = cur.content;
+            const shareNoteBtn = (cur.author === 'user' && !appConfig.soloMode)
+                ? `<button type="button" class="tear-btn" style="margin-right:6px;" onclick="shareCurrentNoteToAI()">💌 给TA看</button>`
+                : '';
+            document.getElementById('noteAuthor').innerHTML = cur.author === 'user'
+                ? `${shareNoteBtn}— ${escapeHtml(appConfig.userName || '我')}`
+                : `— ${escapeHtml(appConfig.charName || 'TA')}`;
+            if (notesList.length > 1) {
+                pager.style.display = 'inline-flex';
+                document.getElementById('notePagerText').innerText = `${currentNoteIdx + 1}/${notesList.length}`;
+            } else { pager.style.display = 'none'; }
+            noteEl.classList.add('show');
+        }
+        async function tearCurrentNote() {
+            if (!notesList.length) { document.getElementById('stickyNote').classList.remove('show'); document.getElementById('emptyNoteText').style.display = 'block'; return; }
+            const [cur] = notesList.splice(currentNoteIdx, 1);
+            if (currentNoteIdx >= notesList.length) currentNoteIdx = Math.max(0, notesList.length - 1);
+            renderNotes();
+            if (cur?.id) await fetch(`${API_BASE}/api/notes/${cur.id}`, { method: 'DELETE' });
+        }
+
+        // 💿 唱片机 + 可视化歌单目录 + 切歌博弈
+        async function loadPlaylist() {
+            try {
+                const builtin = playlist.filter(s => String(s.id).startsWith('builtin-'));
+                const d = (await (await fetch(`${API_BASE}/api/playlist`)).json()).data || [];
+                playlist = [...builtin, ...d];
+                if (currentSongIndex >= playlist.length) currentSongIndex = 0;
+            } catch (e) {}
+        }
+        function openPlaylistModal() {
+            let modal = document.getElementById('playlistModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'playlistModal';
+                modal.className = 'modal-backdrop';
+                modal.onclick = (e) => { if (e.target === modal) closeModal('playlistModal'); };
+                modal.innerHTML = `<div class="modal-box"><h3><span>💿 共享歌单目录</span><span style="cursor:pointer;color:#a8a29e" onclick="closeModal('playlistModal')">✕</span></h3><div style="font-size:11.5px;color:#a8a29e;margin-bottom:12px;" id="playlistSummaryText"></div><div id="playlistDirectoryList" style="max-height:52vh;overflow-y:auto;"></div><button class="btn btn-primary" style="width:100%;margin-top:12px;" onclick="closeModal('playlistModal');openSongModal()">+ 添加新歌曲</button></div>`;
+                document.body.appendChild(modal);
+            }
+            modal.classList.add('open');
+            renderPlaylistDirectory();
+        }
+        function renderPlaylistDirectory() {
+            const box = document.getElementById('playlistDirectoryList') || document.getElementById('playlistList');
+            const summary = document.getElementById('playlistSummaryText');
+            if (summary) summary.innerText = `共 ${playlist.length} 首曲目 · 自定义歌曲独立存于 data/music/playlist.db`;
+            if (!box) return;
+            box.innerHTML = playlist.map((s, idx) => {
+                const isCur = idx === currentSongIndex;
+                const isBuiltin = String(s.id).startsWith('builtin-');
+                return `<div onclick="selectSongFromDirectory(${idx})" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:11px;background:${isCur ? 'rgba(217,119,6,0.18)' : '#181715'};border:1px solid ${isCur ? 'var(--accent)' : '#33302d'};cursor:pointer;margin-bottom:7px;">
+                    <div style="min-width:0;flex:1;">
+                        <div style="font-size:13px;font-weight:${isCur ? '600' : '500'};color:#f5f5f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isCur ? '🎵 ' : ''}${escapeHtml(s.title)}</div>
+                        <div style="font-size:11px;color:#a8a29e;margin-top:2px;">${isBuiltin ? '内置白噪音' : '自定义收藏'}${isCur ? ' · 当前曲目' : ''}</div>
+                    </div>
+                    ${isBuiltin ? '' : `<button type="button" class="mini-btn" style="padding:3px 7px;color:#fca5a5;border-color:rgba(239,68,68,0.35);" onclick="deleteSongFromPlaylist(${s.id}, event)" title="删除歌曲">🗑️</button>`}
+                </div>`;
+            }).join('');
+        }
+        async function selectSongFromDirectory(targetIdx) {
+            closeModal('playlistModal');
+            if (targetIdx === currentSongIndex) {
+                if (audioPlayer.paused) toggleAudioPlay();
+                return;
+            }
+            await requestSkipSongTo(targetIdx);
+        }
+        async function deleteSongFromPlaylist(songId, event) {
+            if (event) event.stopPropagation();
+            if (!confirm('确定要从歌单移除这首歌吗？')) return;
+            await fetch(`${API_BASE}/api/playlist/${songId}`, { method: 'DELETE' });
+            const idx = playlist.findIndex(s => s.id === songId);
+            if (idx !== -1) {
+                playlist.splice(idx, 1);
+                if (currentSongIndex >= playlist.length) currentSongIndex = 0;
+                updateMusicUI();
+            }
+            renderPlaylistDirectory();
+        }
+        function updateMusicUI() {
+            const s = playlist[currentSongIndex] || playlist[0];
+            if (!s) return;
+            document.getElementById('currentSongTitle').innerText = s.title;
+            audioPlayer.src = s.url;
+        }
+        function toggleAudioPlay() {
+            const disc = document.getElementById('vinylDisc'), btn = document.getElementById('playPauseBtn');
+            if (audioPlayer.paused) {
+                if (!audioPlayer.src) updateMusicUI();
+                audioPlayer.play().then(() => { disc.classList.add('playing'); btn.innerText = '⏸ 暂停'; }).catch(() => { document.getElementById('musicToast').innerText = '⚠️ 该曲目受版权限制无法直连播放，请换一首'; });
+            } else { audioPlayer.pause(); disc.classList.remove('playing'); btn.innerText = '▶ 播放'; }
+        }
+        function openSongModal() { document.getElementById('songModal').classList.add('open'); }
+        async function addSongToPlaylist() {
+            const title = document.getElementById('newSongTitle').value.trim();
+            const url = document.getElementById('newSongUrl').value.trim();
+            if (!url) { alert('请至少粘贴网易云链接、歌曲 ID 或音频直链哦～（直接粘贴网易云分享文案会自动识别歌名！）'); return; }
+            try {
+                const res = await fetch(`${API_BASE}/api/playlist`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, url })
+                });
+                const d = await res.json();
+                if (!res.ok || !d.success || !d.song) throw new Error(d.message || '添加失败');
+                playlist.push(d.song);
+                renderPlaylistDirectory();
+                document.getElementById('musicToast').innerText = appConfig.soloMode
+                    ? `已加入《${d.song.title}》，可在歌单点播～`
+                    : `已加入《${d.song.title}》，点歌单或切歌向 TA 申请吧！`;
+                showCommBanner('💿 已加入共享歌单', `《${d.song.title}》已存入歌单目录！（注：网易云 VIP 版权曲目受官方限制可能无法外链直播）`, false);
+                document.getElementById('newSongTitle').value = '';
+                document.getElementById('newSongUrl').value = '';
+                closeModal('songModal');
+            } catch (e) {
+                alert('加歌失败：' + e.message);
+            }
+        }
+        async function requestSkipSong() {
+            const nextIdx = (currentSongIndex + 1) % playlist.length;
+            await requestSkipSongTo(nextIdx);
+        }
+        async function requestSkipSongTo(nextIdx) {
+            const skipBtn = document.getElementById('skipBtn'), toast = document.getElementById('musicToast');
+            const cur = playlist[currentSongIndex]?.title || '', target = playlist[nextIdx]?.title || '';
+            if (appConfig.soloMode) {
+                currentSongIndex = nextIdx; updateMusicUI();
+                audioPlayer.play().then(() => { document.getElementById('vinylDisc').classList.add('playing'); document.getElementById('playPauseBtn').innerText = '⏸ 暂停'; }).catch(() => {});
+                toast.innerText = `🎵 已切至《${target}》`;
+                return;
+            }
+            switchCountToday++; skipBtn.disabled = true; skipBtn.innerText = '请示中...';
+            toast.innerText = `正在向屏幕那头的 ${appConfig.charName || 'TA'} 申请切歌...`;
+            try {
+                const res = await fetch(`${API_BASE}/api/music/request`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ currentSong: cur, targetSong: target, ...getFocusPayload(), switchCountToday, deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) { toast.innerText = `⚠️ ${data.message || '请求失败，请检查设置'}`; return; }
+                if (data.pending) { toast.innerText = '⏳ 已发往外部 MCP 框架，等待对方审批...'; }
+                else if (data.approved) {
+                    currentSongIndex = nextIdx; updateMusicUI();
+                    audioPlayer.play().then(() => { document.getElementById('vinylDisc').classList.add('playing'); document.getElementById('playPauseBtn').innerText = '⏸ 暂停'; }).catch(() => {});
+                    toast.innerText = `✅ 准了：“${data.reason}”`;
+                } else {
+                    skipBtn.classList.add('rejected'); skipBtn.innerText = '驳回！'; toast.innerText = `❌ ${data.reason}`;
+                    if (data.note) { notesList.unshift(data.note); currentNoteIdx = 0; renderNotes(); }
+                    setTimeout(() => { skipBtn.classList.remove('rejected'); skipBtn.innerText = '切歌'; }, 1500);
+                }
+            } catch (e) { toast.innerText = `⚠️ 网络异常：${e.message}`; }
+            finally { skipBtn.disabled = false; if (skipBtn.innerText === '请示中...') skipBtn.innerText = '切歌'; }
+        }
+        function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    </script>
+    <script src="/pet/pet-sprites.js"></script>
+    <script src="/pet/pet-engine.js"></script>
+    <script src="/voice-ui.js"></script>
+    <script src="/presets-ui.js"></script>
+    <script src="/vault-ui.js"></script>
+    <script src="/chat-pro.js"></script>
+    <script src="/memory-ui.js"></script>
+    <script src="/music-pro.js"></script>
+    <script src="/room-polish.js"></script>
+    <script src="/visual-pro.js"></script>
+    <script src="/desk-stack.js"></script>
+    <script src="/fx-pro.js"></script>
+    <script src="/api-pro-ui.js"></script>
+    <script src="/weather-fx.js"></script>
+    <script src="/mcp-ui.js"></script>
+    <script src="/memo-ui.js"></script>
+</body>
+</html>

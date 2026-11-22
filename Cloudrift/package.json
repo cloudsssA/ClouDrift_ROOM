@@ -1,0 +1,17 @@
+{
+  "name": "cloudrift",
+  "version": "1.0.0",
+  "description": "ClouDrift — 本地优先、iOS 美学灵感驱动的 AI 虚拟陪伴自习室（支持独立模式与标准 MCP 三协议外接）",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "mcp": "node mcp-stdio.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.2.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "openai": "^7.62.0"
+  }
+}
