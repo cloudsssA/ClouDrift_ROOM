@@ -354,16 +354,25 @@
     // =========================================================================
     function upgradeGlobalImageSharpness() {
         // 1. 升级全局图片压缩器：同时检查长宽两边的最大边、高质量重采样，告别相框/聊天图发糊！
-        window.compressImageToBase64 = function (file, maxDim = 1800, quality = 0.93) {
-            const targetMax = Math.max(1280, maxDim === 800 ? 1800 : (maxDim === 960 ? 1440 : maxDim));
-            const targetQ = Math.max(0.91, quality <= 0.85 ? 0.93 : quality);
+// 1. 升级全局图片压缩器：兼容手机大图防闪退 + 保住 GIF 动图 + 高清锐利
+        window.compressImageToBase64 = function (file, maxDim = 1800, quality = 0.90) {
+            if (!file) return Promise.resolve('');
+            if (file.type === 'image/gif' && file.size <= 4 * 1024 * 1024) {
+                return new Promise((resolve, reject) => {
+                    const r = new FileReader();
+                    r.onload = () => resolve(r.result);
+                    r.onerror = reject;
+                    r.readAsDataURL(file);
+                });
+            }
+            const targetMax = Math.max(1280, maxDim === 800 ? 1600 : (maxDim === 960 ? 1440 : maxDim));
+            const targetQ = Math.min(0.92, Math.max(0.84, quality));
             return new Promise((resolve, reject) => {
-                const r = new FileReader();
-                r.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        let w = img.width;
-                        let h = img.height;
+                const objectUrl = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        let w = img.width, h = img.height;
                         const longest = Math.max(w, h);
                         if (longest > targetMax) {
                             const ratio = targetMax / longest;
@@ -371,19 +380,28 @@
                             h = Math.round(h * ratio);
                         }
                         const c = document.createElement('canvas');
-                        c.width = w;
-                        c.height = h;
+                        c.width = w; c.height = h;
                         const ctx = c.getContext('2d');
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, w, h);
                         ctx.imageSmoothingEnabled = true;
                         ctx.imageSmoothingQuality = 'high';
                         ctx.drawImage(img, 0, 0, w, h);
+                        URL.revokeObjectURL(objectUrl);
                         resolve(c.toDataURL('image/jpeg', targetQ));
-                    };
-                    img.onerror = reject;
-                    img.src = e.target.result;
+                    } catch (err) {
+                        URL.revokeObjectURL(objectUrl);
+                        reject(err);
+                    }
                 };
-                r.onerror = reject;
-                r.readAsDataURL(file);
+                img.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    const r = new FileReader();
+                    r.onload = () => resolve(r.result);
+                    r.onerror = reject;
+                    r.readAsDataURL(file);
+                };
+                img.src = objectUrl;
             });
         };
 

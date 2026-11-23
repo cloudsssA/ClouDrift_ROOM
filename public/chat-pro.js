@@ -1740,7 +1740,16 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
     };
 
     function hookLifecycle() {
-        for (const fnName of ['loadChatHistory', 'clearAllMemory', 'executeClearChat']) {
+        if (typeof window.loadChatHistory === 'function') {
+            const origLoad = window.loadChatHistory;
+            window.loadChatHistory = async function () {
+                // 正在等 AI 回复或一条条吐气泡时，拦截后台轮询刷新，防止“正在打字”消失并一次性全蹦出来！
+                if (isRequestInFlight) return;
+                abortAllPendingAndStreams();
+                return origLoad.apply(this, arguments);
+            };
+        }
+        for (const fnName of ['clearAllMemory', 'executeClearChat']) {
             if (typeof window[fnName] === 'function') {
                 const orig = window[fnName];
                 window[fnName] = async function () {

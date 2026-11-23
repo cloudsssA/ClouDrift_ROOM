@@ -276,7 +276,7 @@
                     </div>
                 </div>
                 <div class="preset-save-row">
-                    <input id="presetNewProfileName" placeholder="给当前这组 10 项预设起个套装名（如：傲娇毒舌版 / 温柔学长版）..." onkeydown="if(event.key==='Enter') window.PresetsUI.saveProfile()">
+                    <input id="presetNewProfileName" placeholder="给当前这组全部预设起个套装名（如：傲娇毒舌版 / 温柔学长版）..." onkeydown="if(event.key==='Enter') window.PresetsUI.saveProfile()">
                     <button type="button" class="mini-btn" style="border-color:var(--accent);color:#fde68a;padding:7px 12px;" onclick="window.PresetsUI.saveProfile()">💾 另存为套装</button>
                 </div>
                 <div class="preset-profile-list" id="presetProfilesList">
@@ -440,7 +440,7 @@
     }
 
     async function resetAllFactory() {
-        if (!confirm('确定要将全部 10 项 Prompt 一键恢复为出厂默认吗？\n（已保存的预设套装不会被删除）')) return;
+        if (!confirm(`确定要将全部 ${presetsState.meta.length} 项 Prompt 一键恢复为出厂默认吗？\n（已保存的预设套装不会被删除）`)) return;
         try {
             const res = await fetch(`${API_BASE}/api/presets/reset`, {
                 method: 'POST',
@@ -452,7 +452,7 @@
             presetsState.current = data.current || {};
             renderAccordion(getOpenCardKeys());
             if (typeof loadConfig === 'function') await loadConfig();
-            setStatus('✅ 全部 10 项预设已恢复出厂默认并热生效！', '#4ade80');
+            setStatus(`✅ 全部 ${presetsState.meta.length} 项预设已恢复出厂默认并热生效！`, '#4ade80');
         } catch (e) {
             setStatus(`❌ 重置失败：${e.message}`, '#f87171');
         }
@@ -533,7 +533,7 @@
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-        setStatus('📤 已导出当前 10 项预设 JSON 文件！', '#4ade80');
+        setStatus(`📤 已导出当前 ${presetsState.meta.length} 项预设 JSON 文件！`, '#4ade80');
     }
 
     function handleImportFile(event) {

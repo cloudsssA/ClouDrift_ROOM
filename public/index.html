@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>线上陪伴读书室</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <style>
         :root {
             --page-bg: #1a1918;
@@ -47,7 +47,19 @@
         body.solo-mode .ai-only { display: none !important; }
 
         /* 🖼️ 双模式自定义壁纸层 */
-        .room-bg-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; display: none; }
+        .room-bg-layer {
+            position: fixed;
+            top: -60px;
+            left: 0;
+            width: 100vw;
+            height: calc(100vh + 120px);
+            height: calc(100lvh + 120px); /* 上下各多出60px防漏裙摆，彻底锁死iOS底部黑边！ */
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+            display: none;
+            transform: translateZ(0);
+        }
         .room-bg-layer.active { display: block; }
         .room-bg-backdrop {
             position: absolute; inset: -32px; width: calc(100% + 64px); height: calc(100% + 64px);
@@ -431,6 +443,7 @@
             .workspace.reader-open .right-panel { order: 4; }
         }
         @media (max-width: 768px) {
+            input, textarea, select, #commDrawer .im-input { font-size: 16px !important; }
             .top-bar { justify-content: center; }
             .timer-display { font-size: 62px; }
             .paper-texture { padding: 16px; }
@@ -495,6 +508,9 @@
         .im-input:focus { border-color: #0a84ff; }
         .im-send-btn { width: 34px; height: 34px; border-radius: 50%; background: #0a84ff; color: #fff; border: none; font-size: 16px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
         .im-send-btn:disabled { background: #3a3a3c; cursor: not-allowed; }
+
+        .im-time-divider { text-align: center; margin: 10px 0 6px; font-size: 11px; color: rgba(231, 229, 228, 0.72); letter-spacing: 0.3px; }
+        .im-time-divider span { display: inline-block; padding: 2px 9px; border-radius: 999px; background: rgba(20, 19, 18, 0.45); backdrop-filter: blur(4px); }
 
         /* 弹窗通用 & 可视化目录列表 */
         .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 200; }
@@ -1030,6 +1046,20 @@
                     <span>暂停额度耗尽自动放弃时通知 TA<small>45 分钟内 10 分钟暂停额度用完后，是否触发 TA 发通讯消息</small></span>
                     <input type="checkbox" id="cfgNotifyPauseTimeout" checked>
                 </label>
+                <label class="switch-row">
+                    <span>允许 TA 主动发通讯消息<small>网页开启且静默超过设定区间时 TA 会主动搭话（专注期间自动免打扰，帮你安心学习。）</small></span>
+                    <input type="checkbox" id="cfgProactiveChat">
+                </label>
+                <div class="switch-row" style="flex-direction:column;align-items:flex-start;gap:8px;padding-top:6px;">
+                    <span>随机搭话区间<small>在设定区间内随机挑时间戳你，告别闹钟感～</small></span>
+                    <div style="display:flex;align-items:center;gap:6px;width:100%;flex-wrap:wrap;">
+                        <input type="number" id="cfgProactiveMin" min="1" max="300" value="20" style="width:62px;padding:5px 8px;text-align:center;font-size:13px;background:#1f1d1b;color:#f5f5f4;border:1px solid #44403c;border-radius:8px;">
+                        <span style="color:#a8a29e;">~</span>
+                        <input type="number" id="cfgProactiveMax" min="1" max="360" value="45" style="width:62px;padding:5px 8px;text-align:center;font-size:13px;background:#1f1d1b;color:#f5f5f4;border:1px solid #44403c;border-radius:8px;">
+                        <span style="font-size:12px;color:#a8a29e;">分钟</span>
+                        <button type="button" class="mini-btn" style="margin-left:auto;padding:5px 10px;font-size:12px;" onclick="triggerProactiveNow(true)">🧪 测一次</button>
+                    </div>
+                </div>
             </div>
 
             <div class="settings-section-box">
@@ -1153,7 +1183,7 @@
             <button class="btn btn-primary" style="width:100%;" onclick="uploadWidgetPhoto()">放到书桌中央</button>
         </div>
     </div>
-
+    <script src="/mobile-helper.js"></script>
     <script src="/desk-widgets.js"></script>
     <script>
         if (window.pdfjsLib) {
@@ -1210,9 +1240,30 @@
             setPaperTheme(localStorage.getItem(PAPER_THEME_KEY) || 'cream');
             applyReaderFontSize(readerFontSize);
             renderBook(DEFAULT_SAMPLE_BOOK);
-            await loadConfig(); await loadLatestBook(); await loadHighlights();
-            await loadNotes(); await loadPlaylist(); await loadWidgets(); await loadChatHistory();
+
+            // 先拉基础配置，其余 6 个模块全部并发同时拉取，云端秒开！
+            await loadConfig();
+            await Promise.all([
+                loadLatestBook().then(() => loadHighlights()),
+                loadNotes(),
+                loadPlaylist(),
+                loadWidgets(),
+                loadChatHistory()
+            ]);
             updateTimerUI(); updateMusicUI(); updatePeekBtnUI();
+
+            // 🍎 苹果 Safari 音频首次触碰解锁（防止留声机和语音气泡哑巴）
+            const unlockIOSAudio = () => {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (AudioCtx) {
+                    const ctx = new AudioCtx();
+                    if (ctx.state === 'suspended') ctx.resume();
+                }
+                const silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+                silent.play().catch(() => {});
+            };
+            window.addEventListener('touchstart', unlockIOSAudio, { once: true, passive: true });
+            window.addEventListener('click', unlockIOSAudio, { once: true });
         });
 
         document.addEventListener('keydown', (e) => {
@@ -1866,27 +1917,60 @@ let fetchedModelsList = [];
         async function toggleVoiceRecording() {
             const btn = document.getElementById('chatVoiceBtn');
             if (isRecordingAudio && mediaRecorder) {
-                mediaRecorder.stop(); isRecordingAudio = false; btn.classList.remove('recording'); btn.innerText = '🎙️';
-                document.getElementById('imSubStatus').innerText = '✉️ 通讯 · 语音已就绪，点发送传给 TA'; return;
+                mediaRecorder.stop();
+                isRecordingAudio = false;
+                btn.classList.remove('recording');
+                btn.innerText = '🎙️';
+                document.getElementById('imSubStatus').innerText = '✉️ 通讯 · 语音已就绪，点发送传给 TA';
+                return;
             }
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alert('当前环境不支持麦克风录音（需 localhost 或 HTTPS）哦～'); return; }
+            if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert('🔒 手机使用麦克风需要通过 HTTPS 域名（或电脑 localhost）访问自习室哦～');
+                return;
+            }
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+                });
                 audioChunks = [];
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-                mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-                pendingAudioFormat = (mediaRecorder.mimeType || 'audio/webm').includes('ogg') ? 'ogg' : 'webm';
-                mediaRecorder.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) audioChunks.push(ev.data); };
+                // 苹果 Safari 不支持 webm，按优先级自动回落到 audio/mp4 (m4a)
+                const candidates = [
+                    { mime: 'audio/webm;codecs=opus', fmt: 'webm' },
+                    { mime: 'audio/webm', fmt: 'webm' },
+                    { mime: 'audio/mp4;codecs=mp4a.40.2', fmt: 'm4a' },
+                    { mime: 'audio/mp4', fmt: 'm4a' },
+                    { mime: 'audio/aac', fmt: 'aac' },
+                    { mime: 'audio/ogg', fmt: 'ogg' }
+                ];
+                const picked = candidates.find(c => window.MediaRecorder && MediaRecorder.isTypeSupported(c.mime))
+                    || { mime: '', fmt: 'm4a' };
+                mediaRecorder = picked.mime
+                    ? new MediaRecorder(stream, { mimeType: picked.mime })
+                    : new MediaRecorder(stream);
+
+                mediaRecorder.ondataavailable = (ev) => {
+                    if (ev.data && ev.data.size > 0) audioChunks.push(ev.data);
+                };
                 mediaRecorder.onstop = () => {
                     stream.getTracks().forEach(t => t.stop());
-                    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                    const finalMime = mediaRecorder.mimeType || picked.mime || 'audio/mp4';
+                    pendingAudioFormat = finalMime.includes('webm') ? 'webm' : (finalMime.includes('ogg') ? 'ogg' : 'm4a');
+                    const blob = new Blob(audioChunks, { type: finalMime });
                     const reader = new FileReader();
-                    reader.onloadend = () => { pendingAudioBase64 = reader.result; updateAttachPreviewUI(); };
+                    reader.onloadend = () => {
+                        pendingAudioBase64 = reader.result;
+                        updateAttachPreviewUI();
+                    };
                     reader.readAsDataURL(blob);
                 };
-                mediaRecorder.start(); isRecordingAudio = true; btn.classList.add('recording'); btn.innerText = '⏹️';
+                mediaRecorder.start(250); // 苹果 Safari 必须传 250ms 切片防丢包
+                isRecordingAudio = true;
+                btn.classList.add('recording');
+                btn.innerText = '⏹️';
                 document.getElementById('imSubStatus').innerText = '🔴 正在录音中... 再点麦克风结束';
-            } catch (err) { alert('无法启动麦克风：' + err.message); }
+            } catch (err) {
+                alert('无法启动麦克风（请检查手机浏览器麦克风权限）：' + err.message);
+            }
         }
         function toggleChatDrawer() {
             if (appConfig.soloMode) return;
@@ -1959,19 +2043,17 @@ let fetchedModelsList = [];
             document.getElementById('widgetVisibleToAI').checked = false;
             document.getElementById('widgetModal').classList.add('open');
         }
-        function compressImageToBase64(file, maxW = 800, q = 0.82) {
+        async function compressImageToBase64(file, maxW = 800, q = 0.82) {
+            if (typeof compressImageFile === 'function') {
+                const scene = maxW >= 1500 ? 'bg' : (maxW >= 900 ? 'chat' : 'widget');
+                return await compressImageFile(file, scene);
+            }
+            // 万一脚本没加载到时的安全兜底
             return new Promise((resolve, reject) => {
                 const r = new FileReader();
-                r.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        let w = img.width, h = img.height; if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
-                        const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
-                        resolve(c.toDataURL('image/jpeg', q));
-                    };
-                    img.onerror = reject; img.src = e.target.result;
-                };
-                r.onerror = reject; r.readAsDataURL(file);
+                r.onload = () => resolve(r.result);
+                r.onerror = reject;
+                r.readAsDataURL(file);
             });
         }
         async function observeWidgetOnce(widgetObj) {
@@ -2248,8 +2330,11 @@ let fetchedModelsList = [];
             renderCurrentBookPage(true);
         }
 
-        async function extractTextFromPdfBuffer(arrayBuffer) {
+async function extractTextFromPdfBuffer(arrayBuffer) {
             if (!window.pdfjsLib) throw new Error('PDF 解析组件未加载完成，请稍后重试');
+            if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            }
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             const maxPages = Math.min(pdf.numPages, 220), pageTexts = [];
             for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
@@ -2496,8 +2581,16 @@ let fetchedModelsList = [];
                     body: JSON.stringify({ content: text, askReply: wantReply, ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
                 });
                 const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '贴条失败');
-                if (data.userNote) notesList.unshift(data.userNote);
-                if (data.aiNote) notesList.unshift(data.aiNote);
+                // 防轮询抢跑导致同一张便利贴影分身出现两次！
+                if (data.userNote) {
+                    notesList = notesList.filter(n => n.id !== data.userNote.id);
+                    notesList.unshift(data.userNote);
+                }
+                if (data.aiNote) {
+                    notesList = notesList.filter(n => n.id !== data.aiNote.id);
+                    notesList.unshift(data.aiNote);
+                    showCommBanner(`📌 ${appConfig.charName || 'TA'} 回了张便利贴`, data.aiNote.content || '快去书桌看看吧～', false);
+                }
                 currentNoteIdx = 0; renderNotes();
             } catch (e) { showCommBanner('⚠️ 贴条失败', e.message, false); renderNotes(); }
         }
@@ -2730,6 +2823,229 @@ let fetchedModelsList = [];
             } catch (e) { toast.innerText = `⚠️ 网络异常：${e.message}`; }
             finally { skipBtn.disabled = false; if (skipBtn.innerText === '请示中...') skipBtn.innerText = '切歌'; }
         }
+        // 💌 角色主动消息引擎（双端数据库同步 + 随机区间盲盒 + 一键测试）
+        let proactiveCfg = { enabled: false, minMin: 20, maxMin: 45 };
+        let lastChatActivityAt = Date.now();
+        let nextProactiveWaitMs = 20 * 60 * 1000;
+        let proactiveInFlight = false;
+
+        function rollNextProactiveTimer() {
+            lastChatActivityAt = Date.now();
+            const randMin = proactiveCfg.minMin + Math.random() * (proactiveCfg.maxMin - proactiveCfg.minMin);
+            nextProactiveWaitMs = Math.round(randMin * 60 * 1000);
+        }
+        function syncProactiveSettingsUI() {
+            const chk = document.getElementById('cfgProactiveChat');
+            const minEl = document.getElementById('cfgProactiveMin');
+            const maxEl = document.getElementById('cfgProactiveMax');
+            if (chk) chk.checked = Boolean(proactiveCfg.enabled);
+            if (minEl) minEl.value = String(proactiveCfg.minMin);
+            if (maxEl) maxEl.value = String(proactiveCfg.maxMin);
+        }
+        async function loadProactiveCfgFromServer() {
+            try {
+                const res = await fetch(`${API_BASE}/api/chat/pro-settings`);
+                const d = await res.json();
+                if (res.ok && d.success) {
+                    const minMin = Math.max(1, parseInt(d.proactiveMin, 10) || 20);
+                    const maxMin = Math.max(minMin, parseInt(d.proactiveMax, 10) || 45);
+                    proactiveCfg = { enabled: Boolean(d.proactiveEnabled), minMin, maxMin };
+                    syncProactiveSettingsUI();
+                    rollNextProactiveTimer();
+                }
+            } catch {}
+        }
+        async function saveProactiveFromUI() {
+            const chk = document.getElementById('cfgProactiveChat');
+            const minEl = document.getElementById('cfgProactiveMin');
+            const maxEl = document.getElementById('cfgProactiveMax');
+            let minMin = Math.max(1, parseInt(minEl?.value, 10) || 20);
+            let maxMin = Math.max(1, parseInt(maxEl?.value, 10) || 45);
+            if (maxMin < minMin) maxMin = minMin;
+            if (minEl) minEl.value = String(minMin);
+            if (maxEl) maxEl.value = String(maxMin);
+            proactiveCfg = { enabled: Boolean(chk?.checked), minMin, maxMin };
+            rollNextProactiveTimer();
+            try {
+                await fetch(`${API_BASE}/api/chat/pro-settings`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        proactiveEnabled: proactiveCfg.enabled,
+                        proactiveMin: proactiveCfg.minMin,
+                        proactiveMax: proactiveCfg.maxMin
+                    })
+                });
+            } catch {}
+        }
+
+        document.getElementById('cfgProactiveChat')?.addEventListener('change', saveProactiveFromUI);
+        document.getElementById('cfgProactiveMin')?.addEventListener('change', saveProactiveFromUI);
+        document.getElementById('cfgProactiveMax')?.addEventListener('change', saveProactiveFromUI);
+
+        const _origOpenSettingsForProactive = window.openSettingsModal;
+        window.openSettingsModal = function () {
+            if (_origOpenSettingsForProactive) _origOpenSettingsForProactive.apply(this, arguments);
+            loadProactiveCfgFromServer();
+        };
+
+        document.getElementById('imInput')?.addEventListener('input', rollNextProactiveTimer);
+        document.getElementById('imSendBtn')?.addEventListener('click', rollNextProactiveTimer);
+        loadProactiveCfgFromServer();
+
+        async function triggerProactiveNow(isManualTest = false) {
+            if (proactiveInFlight) return;
+            if (appConfig.soloMode || appConfig.mode !== 'standalone') {
+                if (isManualTest) showCommBanner('⚠️ 无法触发', '单人模式或 MCP 模式下不会触发主动消息哦～', false);
+                return;
+            }
+            proactiveInFlight = true;
+            const idleMinutes = isManualTest ? proactiveCfg.minMin : Math.max(1, Math.round((Date.now() - lastChatActivityAt) / 60000));
+            rollNextProactiveTimer();
+            if (isManualTest) {
+                closeModal('settingsModal');
+                showCommBanner('🧪 正在召唤 ' + (appConfig.charName || 'TA'), '模拟静默触发主动消息中，请稍候 3 秒...', false);
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/chat/proactive`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        idleMinutes,
+                        ...getFocusPayload(),
+                        currentSong: playlist[currentSongIndex]?.title || '',
+                        deskSummary: getDeskSummary()
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
+                if (Array.isArray(data.replyMsgs) && data.replyMsgs.length) {
+                    const drawerOpen = document.getElementById('commDrawer')?.classList.contains('open');
+                    for (const msg of data.replyMsgs) {
+                        chatHistory.push(msg);
+                        window.appendBubble('assistant', msg.content, false, { msgId: msg.id });
+                    }
+                    if (!drawerOpen) {
+                        showCommBanner(`☁️ ${appConfig.charName || 'TA'} 发来了通讯消息`, '点开小手机看看 TA 说了什么吧～', true);
+                    }
+                }
+            } catch (err) {
+                if (isManualTest) showCommBanner('❌ 主动消息测试失败', err.message, false);
+            } finally {
+                proactiveInFlight = false;
+            }
+        }
+
+        setInterval(() => {
+            if (!proactiveCfg.enabled || document.hidden || proactiveInFlight) return;
+            // 专注期间自动免打扰，帮大家安心做事！
+            const focusInfo = typeof getFocusPayload === 'function' ? getFocusPayload() : {};
+            if (focusInfo.isFocusing) {
+                lastChatActivityAt = Date.now();
+                return;
+            }
+            if (Date.now() - lastChatActivityAt >= nextProactiveWaitMs) {
+                triggerProactiveNow(false);
+            }
+        }, 15 * 1000);
+// 🕒 微信同款聊天时间戳（DOM 监听版 · 无视脚本覆盖 · 超过 5 分钟自动插入）
+        function parseMsgTime(rawTs) {
+            if (!rawTs) return 0;
+            if (typeof rawTs === 'number') return rawTs;
+            const s = String(rawTs).trim();
+            // 兼容 SQLite 默认 UTC 格式 "YYYY-MM-DD HH:MM:SS"
+            const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s) ? s.replace(' ', 'T') + 'Z' : s;
+            const t = Date.parse(iso);
+            return isNaN(t) ? 0 : t;
+        }
+        function formatWechatTime(ms) {
+            const d = new Date(ms);
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+            const startOfMsg = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+            const diffDays = Math.round((startOfToday - startOfMsg) / 86400000);
+            if (diffDays === 0) return hm;
+            if (diffDays === 1) return `昨天 ${hm}`;
+            if (diffDays === 2) return `前天 ${hm}`;
+            if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+            return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+        }
+        function getChatMsgContainer() {
+            return document.getElementById('imMessages')
+                || document.getElementById('imMsgList')
+                || document.getElementById('commMessages')
+                || document.getElementById('chatMessages')
+                || document.getElementById('imBody')
+                || document.querySelector('#commDrawer .im-messages, #commDrawer .im-body, #commDrawer .chat-messages')
+                || document.querySelector('#commDrawer [data-msg-id]')?.parentElement
+                || document.querySelector('#commDrawer .im-row, #commDrawer .msg-row, #commDrawer .chat-row')?.parentElement;
+        }
+        let tsSyncTimer = null;
+        let isSyncingTs = false;
+        function syncChatTimestamps() {
+            const box = getChatMsgContainer();
+            if (!box || typeof chatHistory === 'undefined' || !Array.isArray(chatHistory) || !chatHistory.length) return;
+
+            const rows = Array.from(box.children).filter(el => {
+                if (el.classList.contains('im-time-divider')) return false;
+                if (el.classList.contains('im-typing-row') || el.dataset.isTemp) return false;
+                if (el.querySelector('.typing-dots, .im-typing')) return false;
+                return Boolean(
+                    el.dataset.msgId || el.getAttribute('data-msg-id') ||
+                    el.classList.contains('im-row') || el.classList.contains('chat-row') || el.classList.contains('msg-row') ||
+                    el.querySelector('.im-bubble, .bubble, .im-avatar')
+                );
+            });
+            if (!rows.length) return;
+
+            const wasNearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 90;
+            box.querySelectorAll('.im-time-divider').forEach(el => el.remove());
+
+            let lastTs = 0;
+            const offset = Math.max(0, chatHistory.length - rows.length);
+
+            rows.forEach((row, idx) => {
+                const rowId = row.dataset.msgId || row.getAttribute('data-msg-id') || row.getAttribute('data-id');
+                let msg = rowId ? chatHistory.find(m => String(m.id) === String(rowId)) : null;
+                if (!msg) msg = chatHistory[offset + idx];
+                const rawTs = msg?.created_at || msg?.timestamp || msg?.createdAt || msg?.time;
+                const msgMs = parseMsgTime(rawTs);
+                if (!msgMs) return;
+
+                if (!lastTs || (msgMs - lastTs >= 5 * 60 * 1000)) {
+                    const div = document.createElement('div');
+                    div.className = 'im-time-divider';
+                    div.innerHTML = `<span>${formatWechatTime(msgMs)}</span>`;
+                    box.insertBefore(div, row);
+                }
+                lastTs = msgMs;
+            });
+
+            if (wasNearBottom) box.scrollTop = box.scrollHeight;
+        }
+        function scheduleSyncChatTimestamps() {
+            if (isSyncingTs) return;
+            clearTimeout(tsSyncTimer);
+            tsSyncTimer = setTimeout(() => {
+                isSyncingTs = true;
+                try { syncChatTimestamps(); } finally {
+                    setTimeout(() => { isSyncingTs = false; }, 40);
+                }
+            }, 90);
+        }
+        window.addEventListener('load', () => {
+            const drawer = document.getElementById('commDrawer');
+            if (drawer) {
+                new MutationObserver((mutations) => {
+                    const hasRealChange = mutations.some(m =>
+                        Array.from(m.addedNodes).concat(Array.from(m.removedNodes))
+                            .some(n => !(n.nodeType === 1 && n.classList.contains('im-time-divider')))
+                    );
+                    if (hasRealChange) scheduleSyncChatTimestamps();
+                }).observe(drawer, { childList: true, subtree: true });
+            }
+            scheduleSyncChatTimestamps();
+        });
         function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     </script>
     <script src="/pet/pet-sprites.js"></script>
@@ -2748,5 +3064,6 @@ let fetchedModelsList = [];
     <script src="/weather-fx.js"></script>
     <script src="/mcp-ui.js"></script>
     <script src="/memo-ui.js"></script>
+    <script src="/mobile-helper.js"></script>
 </body>
 </html>

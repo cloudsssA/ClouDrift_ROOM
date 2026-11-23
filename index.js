@@ -10,9 +10,25 @@ const vault = require('./vault');
 vault.migrateFromCoreDb(db);
 const path = require('path');
 
+const compression = require('compression');
+const mediaStore = require('./media-store');
+mediaStore.migrateExistingBase64({ db, vault });
+
 const app = express();
 app.use(cors());
+
+// 全站开启 Gzip 压缩（自动放过 SSE 流式推送，绝不卡顿）
+app.use(compression({
+    filter: (req, res) => {
+        if (req.headers['accept'] === 'text/event-stream') return false;
+        return compression.filter(req, res);
+    }
+}));
+
 app.use(express.json({ limit: '25mb' }));
+
+// 上传的图片/音频走 30 天浏览器强缓存（因为带内容哈希，换图自动换链接，旧图 0ms 秒开！）
+app.use('/uploads', express.static(mediaStore.UPLOAD_DIR, { maxAge: '30d', immutable: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const DEFAULT_INK_COLOR = '#1c1917';
@@ -499,6 +515,8 @@ app.post('/api/config', (req, res) => {
                 saveSetting(key, req.body[key] ? 'true' : 'false');
             } else if (key === 'voicePrompt') {
                 saveSetting(key, sanitizeCharVoiceOverride(req.body[key]));
+            } else if (['bgImage', 'charAvatar', 'userAvatar'].includes(key)) {
+                saveSetting(key, mediaStore.persistMedia(req.body[key], key));
             } else {
                 saveSetting(key, req.body[key]);
             }
@@ -660,15 +678,16 @@ app.post('/api/characters', (req, res) => {
     const vSpeed = Math.max(0.5, Math.min(2.0, parseFloat(voice_speed) || 1.0));
     const cleanVoicePrompt = sanitizeCharVoiceOverride(voice_prompt);
     const cleanPresetProfile = String(preset_profile || '').trim();
+    const savedAvatar = mediaStore.persistMedia(avatar, 'char');
     const info = vault.charactersDb.prepare(
         'INSERT INTO character_cards (char_name, persona, avatar, ink_color, note_color, voice_enabled, voice_id, voice_speed, voice_prompt, preset_profile) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(char_name, persona, avatar, ink_color, note_color, vEnabled, voice_id, vSpeed, cleanVoicePrompt, cleanPresetProfile);
+    ).run(char_name, persona, savedAvatar, ink_color, note_color, vEnabled, voice_id, vSpeed, cleanVoicePrompt, cleanPresetProfile);
     const charKey = `card_${info.lastInsertRowid}`;
     res.json({
         success: true,
         card: {
             id: info.lastInsertRowid, char_key: charKey, memory_file: vault.getMemoryDbFilename(charKey),
-            char_name, persona, avatar, ink_color, note_color,
+            char_name, persona, avatar: savedAvatar, ink_color, note_color,
             voice_enabled: vEnabled, voice_id, voice_speed: vSpeed, voice_prompt: cleanVoicePrompt,
             preset_profile: cleanPresetProfile, memory_count: 0
         }
@@ -684,7 +703,7 @@ app.put('/api/characters/:id', (req, res) => {
     const persona = String(req.body.persona ?? existing.persona).trim();
     if (!char_name || !persona) return res.status(400).json({ success: false, message: '角色名和人设不能为空' });
 
-    const avatar = req.body.avatar !== undefined ? req.body.avatar : existing.avatar;
+    const avatar = req.body.avatar !== undefined ? mediaStore.persistMedia(req.body.avatar, 'char') : existing.avatar;
     const ink_color = req.body.ink_color ?? existing.ink_color;
     const note_color = req.body.note_color ?? existing.note_color;
     const voice_enabled = req.body.voice_enabled !== undefined ? (req.body.voice_enabled ? 1 : 0) : existing.voice_enabled;
@@ -736,17 +755,18 @@ app.post('/api/users', (req, res) => {
     if (!cleanName) return res.status(400).json({ success: false, message: '用户名字不能为空哦～' });
 
     const useQuick = use_quick_relation ? 1 : 0;
+    const savedAvatar = mediaStore.persistMedia(avatar, 'user');
     const info = vault.usersDb.prepare(`
         INSERT INTO user_cards (user_name, avatar, use_quick_relation, user_relation, char_call_user, user_persona)
         VALUES (?, ?, ?, ?, ?, ?)
-    `).run(cleanName, avatar, useQuick, String(user_relation).trim(), String(char_call_user).trim(), String(user_persona).trim());
+    `).run(cleanName, savedAvatar, useQuick, String(user_relation).trim(), String(char_call_user).trim(), String(user_persona).trim());
 
     res.json({
         success: true,
         card: {
             id: info.lastInsertRowid,
             user_name: cleanName,
-            avatar,
+            avatar: savedAvatar,
             use_quick_relation: useQuick,
             user_relation: String(user_relation).trim(),
             char_call_user: String(char_call_user).trim(),
@@ -763,7 +783,9 @@ app.put('/api/users/:id', (req, res) => {
     const cleanName = String(req.body?.user_name ?? existing.user_name).trim();
     if (!cleanName) return res.status(400).json({ success: false, message: '用户名字不能为空哦～' });
 
-    const avatar = req.body?.avatar !== undefined ? req.body.avatar : existing.avatar;
+    const avatar = req.body?.avatar !== undefined
+        ? mediaStore.persistMedia(req.body.avatar, 'user')
+        : existing.avatar;
     const useQuick = req.body?.use_quick_relation !== undefined ? (req.body.use_quick_relation ? 1 : 0) : existing.use_quick_relation;
     const user_relation = req.body?.user_relation !== undefined ? String(req.body.user_relation).trim() : existing.user_relation;
     const char_call_user = req.body?.char_call_user !== undefined ? String(req.body.char_call_user).trim() : existing.char_call_user;
@@ -893,9 +915,16 @@ app.post('/api/focus/decision', async (req, res) => {
 // --- 接口 3：✉️ 通讯双向气泡聊天（一人一库 data/memory/<charKey>.db）---
 app.get('/api/chat', (req, res) => {
     const charKey = getActiveCharKey();
-    const data = vault.hasMemoryDb(charKey)
-        ? vault.getMemoryDb(charKey).prepare('SELECT * FROM chat_messages ORDER BY id ASC LIMIT 120').all()
-        : [];
+    const limit = Math.min(parseInt(req.query.limit, 10) || 60, 150);
+    let data = [];
+    if (vault.hasMemoryDb(charKey)) {
+        const memDb = vault.getMemoryDb(charKey);
+        // 正确姿势：先倒序取最新的 limit 条，再按 id 正序排回聊天时间线！
+        const rawRows = memDb
+            .prepare('SELECT * FROM (SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?) ORDER BY id ASC')
+            .all(limit);
+        data = rawRows.map(row => mediaStore.slimChatRowIfNeeded(memDb, row));
+    }
     res.json({ success: true, activeCharKey: charKey, memoryFile: vault.getMemoryDbFilename(charKey), data });
 });
 
@@ -927,8 +956,10 @@ app.post('/api/chat', async (req, res) => {
     const charKey = getActiveCharKey();
     const reqEpoch = getMemoryEpoch(charKey);
     const memDb = vault.getMemoryDb(charKey);
-    const storedUserContent = (imageData || audioData)
-        ? JSON.stringify({ __mm: 1, text, imageData, audioData })
+    const savedUserImageUrl = imageData ? mediaStore.persistMedia(imageData, 'chat_img') : '';
+    const savedUserAudioUrl = audioData ? mediaStore.persistMedia(audioData, 'chat_aud') : '';
+    const storedUserContent = (savedUserImageUrl || savedUserAudioUrl)
+        ? JSON.stringify({ __mm: 1, text, imageData: savedUserImageUrl, audioData: savedUserAudioUrl })
         : text;
 
     const userInfo = memDb.prepare('INSERT INTO chat_messages (char_key, role, content) VALUES (?, ?, ?)').run(charKey, 'user', storedUserContent);
@@ -1012,8 +1043,9 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
-        const storedAssistantContent = replyAudioData
-            ? JSON.stringify({ __mm: 1, text: replyText, audioData: replyAudioData, isVoiceMsg: true })
+        const savedReplyAudioUrl = replyAudioData ? mediaStore.persistMedia(replyAudioData, 'tts') : '';
+        const storedAssistantContent = savedReplyAudioUrl
+            ? JSON.stringify({ __mm: 1, text: replyText, audioData: savedReplyAudioUrl, isVoiceMsg: true })
             : replyText;
 
         const isStaleAfterReset = getMemoryEpoch(charKey) !== reqEpoch;
@@ -1564,13 +1596,13 @@ app.delete('/api/playlist/:id', (req, res) => {
 });
 
 // --- 接口 9：🖼️ 桌面图片小组件（单次视觉直通 + <memo> 记忆回填）---
-app.get('/api/widgets', (req, res) => {
-    const rows = db.prepare('SELECT * FROM widgets ORDER BY id DESC').all().map(w => ({
-        ...w,
-        visible_to_ai: w.visible_to_ai ? 1 : 0,
-        ai_memo: w.ai_memo || ''
-    }));
-    res.json({ success: true, data: rows });
+app.post('/api/widgets', (req, res) => {
+    const { image_data, caption = '', visible_to_ai = 0 } = req.body;
+    if (!image_data) return res.status(400).json({ success: false, message: '图片不能为空' });
+    const savedUrl = mediaStore.persistMedia(image_data, 'widget');
+    const vis = visible_to_ai ? 1 : 0;
+    const info = db.prepare('INSERT INTO widgets (image_data, caption, visible_to_ai, ai_memo) VALUES (?, ?, ?, ?)').run(savedUrl, caption, vis, '');
+    res.json({ success: true, widget: { id: info.lastInsertRowid, image_data: savedUrl, caption, visible_to_ai: vis, ai_memo: '' } });
 });
 
 app.post('/api/widgets', (req, res) => {
@@ -1618,7 +1650,7 @@ app.post('/api/widgets/:id/observe', async (req, res) => {
             },
             {
                 type: 'image_url',
-                image_url: { url: widget.image_data }
+                image_url: { url: mediaStore.toDataUrlForAI(widget.image_data) }
             }
         ];
 
@@ -1763,7 +1795,7 @@ app.delete('/api/presets/profiles/:name', (req, res) => {
 });
 
 require('./chat-pro-routes')(app, {
-    db, tts, presets, vault, memoEngine,
+    db, tts, presets, vault, memoEngine, mediaStore,
     getSetting, saveSetting, getBoolSetting, getActiveCharKey,
     createAIClient, getModelName, getPersonasBlock, getRoomContextSummary,
     getUnifiedMemoryMessages, buildOrderedMessages, cleanAIOutput,
@@ -1771,7 +1803,7 @@ require('./chat-pro-routes')(app, {
 });
 
 require('./music-pro-routes')(app, {
-    db, musicDb, tts, presets, vault, memoEngine,
+    db, musicDb, tts, presets, vault, memoEngine, mediaStore,
     getSetting, getBoolSetting, getActiveCharKey,
     createAIClient, getModelName, getPersonasBlock, getRoomContextSummary,
     getUnifiedMemoryMessages, buildOrderedMessages, cleanAIOutput,
@@ -1779,6 +1811,6 @@ require('./music-pro-routes')(app, {
 });
 apiEngine.registerRoutes(app);
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 线上陪伴读书室完全体后端已就位: http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 线上陪伴读书室完全体后端已就位: http://localhost:${PORT} (已开放局域网/云端访问)`);
 });

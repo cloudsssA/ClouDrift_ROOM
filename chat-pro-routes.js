@@ -186,19 +186,28 @@ function getAvailablePlaylistTitles() {
 module.exports = function registerChatProRoutes(app, ctx) {
     tavily.registerRoutes(app, ctx);
     registerMcpBridge(app, ctx);
-    const {
-        db, tts, presets, vault, memoEngine,
+const {
+        db, tts, presets, vault, memoEngine, mediaStore,
         getSetting, saveSetting, getBoolSetting, getActiveCharKey,
         createAIClient, getModelName, getPersonasBlock, getRoomContextSummary,
         getUnifiedMemoryMessages, buildOrderedMessages, cleanAIOutput,
         extractMemoTag, formatLocalTimestamp, getMemoryEpoch, getMemoryCount
     } = ctx;
 
+    const persistMedia = (val, prefix) => (mediaStore ? mediaStore.persistMedia(val, prefix) : val);
+    const toDataUrlForAI = (val) => (mediaStore ? mediaStore.toDataUrlForAI(val) : val);
+
     function getChatTheme() {
         const raw = getSetting('chatThemeJson', '').trim();
         if (!raw) return { ...DEFAULT_CHAT_THEME };
         try {
-            return { ...DEFAULT_CHAT_THEME, ...JSON.parse(raw) };
+            const parsed = { ...DEFAULT_CHAT_THEME, ...JSON.parse(raw) };
+            // 老版本存过巨型 Base64 聊天背景图时，读取瞬间顺手抽脂转成 /uploads/ 秒加载链接
+            if (parsed.chatBgImage && parsed.chatBgImage.startsWith('data:')) {
+                parsed.chatBgImage = persistMedia(parsed.chatBgImage, 'chat_bg');
+                saveSetting('chatThemeJson', JSON.stringify(parsed));
+            }
+            return parsed;
         } catch {
             return { ...DEFAULT_CHAT_THEME };
         }
@@ -210,7 +219,7 @@ module.exports = function registerChatProRoutes(app, ctx) {
             userBubbleBg: typeof patch.userBubbleBg === 'string' && patch.userBubbleBg.trim() ? patch.userBubbleBg.trim() : cur.userBubbleBg,
             aiBubbleBg: typeof patch.aiBubbleBg === 'string' && patch.aiBubbleBg.trim() ? patch.aiBubbleBg.trim() : cur.aiBubbleBg,
             chatBgColor: typeof patch.chatBgColor === 'string' && patch.chatBgColor.trim() ? patch.chatBgColor.trim() : cur.chatBgColor,
-            chatBgImage: typeof patch.chatBgImage === 'string' ? patch.chatBgImage : cur.chatBgImage,
+            chatBgImage: typeof patch.chatBgImage === 'string' ? persistMedia(patch.chatBgImage, 'chat_bg') : cur.chatBgImage,
             chatBgMode: patch.chatBgMode === 'blur' ? 'blur' : (patch.chatBgMode === 'cover' ? 'cover' : cur.chatBgMode),
             chatBgBlur: patch.chatBgBlur !== undefined ? Math.max(0, Math.min(24, parseFloat(patch.chatBgBlur) || 0)) : cur.chatBgBlur,
             chatBgDim: patch.chatBgDim !== undefined ? Math.max(0, Math.min(0.85, parseFloat(patch.chatBgDim) || 0)) : cur.chatBgDim
@@ -227,7 +236,10 @@ module.exports = function registerChatProRoutes(app, ctx) {
             chatDebounceEnabled: getBoolSetting('chatDebounceEnabled', true),
             chatDebounceSec: isNaN(rawSec) ? 10 : Math.max(2, Math.min(60, rawSec)),
             chatTheme: getChatTheme(),
-            defaultChatTheme: { ...DEFAULT_CHAT_THEME }
+            defaultChatTheme: { ...DEFAULT_CHAT_THEME },
+            proactiveEnabled: getBoolSetting('proactiveEnabled', false),
+            proactiveMin: Math.max(1, parseInt(getSetting('proactiveMin', '20'), 10) || 20),
+            proactiveMax: Math.max(1, parseInt(getSetting('proactiveMax', '45'), 10) || 45),
         };
     }
 
@@ -296,9 +308,10 @@ module.exports = function registerChatProRoutes(app, ctx) {
                 ? `[${nowTs}] ${userName}（通讯消息）：\n${mergedText}`
                 : `[${nowTs}] ${userName}（通讯消息）：（给你发来了${images.length ? '图片' : ''}${images.length && audios.length ? '和' : ''}${audios.length ? '语音' : ''}消息，请直接自然回应）`;
             parts.push({ type: 'text', text: headerHint });
-            for (const img of images) parts.push({ type: 'image_url', image_url: { url: img } });
+            for (const img of images) parts.push({ type: 'image_url', image_url: { url: toDataUrlForAI(img) } });
             for (const aud of audios) {
-                const base64Only = aud.data.includes(',') ? aud.data.split(',')[1] : aud.data;
+                const fullAudData = toDataUrlForAI(aud.data);
+                const base64Only = fullAudData.includes(',') ? fullAudData.split(',')[1] : fullAudData;
                 const cleanFmt = String(aud.format || 'webm').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'webm';
                 parts.push({ type: 'input_audio', input_audio: { data: base64Only, format: cleanFmt } });
             }
@@ -349,10 +362,11 @@ module.exports = function registerChatProRoutes(app, ctx) {
                         speed: getSetting('voiceSpeed', '1.0')
                     });
                     if (synth.audioData) {
+                        const savedVoiceUrl = persistMedia(synth.audioData, 'tts');
                         preparedBubbles.push({
                             kind: 'voice',
                             text: seg.text,
-                            content: JSON.stringify({ __mm: 1, text: seg.text, audioData: synth.audioData, isVoiceMsg: true })
+                            content: JSON.stringify({ __mm: 1, text: seg.text, audioData: savedVoiceUrl, isVoiceMsg: true })
                         });
                         continue;
                     }
@@ -424,6 +438,9 @@ module.exports = function registerChatProRoutes(app, ctx) {
             saveChatTheme(req.body.chatTheme);
         }
         res.json({ success: true, ...getProSettings() });
+        if (req.body.proactiveEnabled !== undefined) saveSetting('proactiveEnabled', req.body.proactiveEnabled ? 'true' : 'false');
+        if (req.body.proactiveMin !== undefined) saveSetting('proactiveMin', Math.max(1, parseInt(req.body.proactiveMin, 10) || 20));
+        if (req.body.proactiveMax !== undefined) saveSetting('proactiveMax', Math.max(1, parseInt(req.body.proactiveMax, 10) || 45));
     });
 
     // --- 接口 B：小手机增强聊天接口 ---
@@ -458,8 +475,10 @@ module.exports = function registerChatProRoutes(app, ctx) {
         const userMsgs = [];
         for (const it of items) {
             const t = String(it.content || '').trim();
-            const stored = (it.imageData || it.audioData)
-                ? JSON.stringify({ __mm: 1, text: t, imageData: it.imageData || '', audioData: it.audioData || '' })
+            const savedImg = it.imageData ? persistMedia(it.imageData, 'chat_img') : '';
+            const savedAud = it.audioData ? persistMedia(it.audioData, 'chat_aud') : '';
+            const stored = (savedImg || savedAud)
+                ? JSON.stringify({ __mm: 1, text: t, imageData: savedImg, audioData: savedAud })
                 : t;
             const info = insertUserChat.run(charKey, 'user', stored, turnId);
             userMsgs.push({ id: info.lastInsertRowid, role: 'user', content: stored, turn_id: turnId });
@@ -537,11 +556,14 @@ module.exports = function registerChatProRoutes(app, ctx) {
 
         const items = targetUserRows.map(r => {
             const parsed = parseStoredPayload(r.content);
+            const audUrl = parsed.audioData || '';
+            const extMatch = audUrl.match(/\.([a-z0-9]+)$/i);
+            const inferredFmt = extMatch ? extMatch[1].toLowerCase() : (audUrl.includes('audio/mp4') ? 'm4a' : 'webm');
             return {
                 content: parsed.text || '',
                 imageData: parsed.imageData || '',
-                audioData: parsed.audioData || '',
-                audioFormat: 'webm'
+                audioData: audUrl,
+                audioFormat: inferredFmt
             };
         });
 
@@ -809,6 +831,110 @@ module.exports = function registerChatProRoutes(app, ctx) {
         saveSetting('visualPrefsJson', JSON.stringify(merged));
         res.json({ success: true, prefs: merged });
     });
+    // --- 接口 H：💌 角色主动发起通讯消息 ---
+    app.post('/api/chat/proactive', async (req, res) => {
+        if (getBoolSetting('soloMode', false) || getSetting('mode', 'standalone') !== 'standalone') {
+            return res.json({ success: true, skipped: true });
+        }
+        const {
+            idleMinutes = 30,
+            activeWidgetId = null, focusState = 'idle', isFocusing = false,
+            totalMinutes = 25, elapsedMinutes = 0, remainingMinutes = 25,
+            currentSong = '', deskSummary = ''
+        } = req.body || {};
 
+        const charKey = getActiveCharKey();
+        const reqEpoch = getMemoryEpoch(charKey);
+        const turnId = makeTurnId();
+        const memDb = vault.getMemoryDb(charKey);
+        ensureTurnSchema(memDb);
+
+        try {
+            const openai = createAIClient();
+            const { promptText, userName, charName } = getPersonasBlock(charKey);
+            const proCfg = getProSettings();
+            const voiceEnabled = getBoolSetting('voiceEnabled', false);
+
+            const splitSection = proCfg.chatSplitEnabled
+                ? `\n\n${presets.getPrompt('chatSplitPrompt', { char: charName, user: userName })}`
+                : '';
+            const roomContext = getRoomContextSummary({
+                charKey, focusState, isFocusing, totalMinutes, elapsedMinutes, remainingMinutes, currentSong, deskSummary, activeWidgetId
+            });
+            const history = getUnifiedMemoryMessages(charKey);
+            const nowTs = formatLocalTimestamp();
+
+            const triggerPrompt = `[${nowTs}] ${presets.getPrompt('proactiveChat', {
+                char: charName, user: userName, idleMinutes
+            })}`;
+
+            const messages = buildOrderedMessages(
+                `${promptText}${splitSection}\n\n${roomContext}`,
+                history,
+                triggerPrompt
+            );
+            const { rawReply } = await tavily.createChatCompletionWithSearch({
+                openai, model: getModelName(), messages, ctx
+            });
+
+            const segments = parseReplyIntoSegments(rawReply, {
+                charName, splitByDollar: proCfg.chatSplitEnabled, voiceEnabled, cleanAIOutput
+            });
+
+            const ttsApiKey = getSetting('ttsApiKey', '').trim();
+            let voiceSynthCount = 0;
+            const preparedBubbles = [];
+            for (const seg of segments) {
+                if (seg.kind === 'voice' && voiceEnabled && ttsApiKey && voiceSynthCount < 2) {
+                    voiceSynthCount++;
+                    try {
+                        const synth = await tts.synthesizeSpeech({
+                            text: seg.text,
+                            baseURL: getSetting('ttsBaseURL', tts.DEFAULT_TTS_BASE_URL),
+                            apiKey: ttsApiKey,
+                            groupId: getSetting('ttsGroupId', ''),
+                            model: getSetting('ttsModel', tts.DEFAULT_TTS_MODEL),
+                            voiceId: getSetting('voiceId', tts.DEFAULT_VOICE_ID),
+                            speed: getSetting('voiceSpeed', '1.0')
+                        });
+                        if (synth.audioData) {
+                            const savedVoiceUrl = persistMedia(synth.audioData, 'tts');
+                            preparedBubbles.push({
+                                kind: 'voice', text: seg.text,
+                                content: JSON.stringify({ __mm: 1, text: seg.text, audioData: savedVoiceUrl, isVoiceMsg: true })
+                            });
+                            continue;
+                        }
+                    } catch {}
+                }
+                preparedBubbles.push({ kind: 'text', text: seg.text, content: seg.text });
+            }
+
+            if (getMemoryEpoch(charKey) !== reqEpoch) {
+                return res.json({ success: true, staleDiscarded: true, replyMsgs: [] });
+            }
+
+            const insertChat = memDb.prepare(
+                'INSERT INTO chat_messages (char_key, role, content, turn_id) VALUES (?, ?, ?, ?)'
+            );
+            const replyMsgs = [];
+            for (const b of preparedBubbles) {
+                const info = insertChat.run(charKey, 'assistant', b.content, turnId);
+                replyMsgs.push({
+                    id: info.lastInsertRowid, role: 'assistant', content: b.content,
+                    turn_id: turnId, kind: b.kind, charLen: b.text.length,
+                    created_at: new Date().toISOString()
+                });
+            }
+
+            const joinedAssistantMemory = segments.map(s => s.text).join('\n');
+            insertMemoryWithTurn(memDb, charKey, turnId, 'chat', 'assistant', `（主动发来通讯）${joinedAssistantMemory}`, reqEpoch);
+            memoEngine.onTurnCompleted(charKey);
+
+            res.json({ success: true, turnId, replyMsgs });
+        } catch (error) {
+            res.status(400).json({ success: false, message: error.message });
+        }
+    });
     console.log('📱 小手机通讯 & Tavily & 跨次元联动 & 统一记忆视图已就位');
 };

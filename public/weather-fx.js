@@ -59,14 +59,19 @@
         if (!canvas || !ctx) return;
         const nextW = window.innerWidth;
         const nextH = window.innerHeight;
-        if (nextW === width && nextH === height) return;
+        // 手机上下滑时 Safari 地址栏伸缩只会微调高度，直接忽略，彻底治好粒子乱闪重置！
+        const widthChanged = Math.abs(nextW - width) > 10;
+        if (!widthChanged && width > 0 && Math.abs(nextH - height) < 160) return;
+
         const dpr = Math.min(1.5, window.devicePixelRatio || 1);
         width = nextW;
         height = nextH;
         canvas.width = Math.round(width * dpr);
         canvas.height = Math.round(height * dpr);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        rebuildParticles();
+        if (particles.length === 0 || widthChanged) {
+            rebuildParticles();
+        }
     }
 
     function spawnParticle(kind, randomY = true) {
@@ -236,11 +241,17 @@
             } else if (currentKind === 'fog') {
                 p.x += p.vx;
                 p.y += p.vy;
+                // 柔和径向渐变薄雾，边缘自然消融，告别硬边大光斑！
+                const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
+                grad.addColorStop(0, `rgba(226, 232, 240, ${(p.alpha * 1.2).toFixed(3)})`);
+                grad.addColorStop(0.5, `rgba(226, 232, 240, ${(p.alpha * 0.45).toFixed(3)})`);
+                grad.addColorStop(1, 'rgba(226, 232, 240, 0)');
                 ctx.beginPath();
-                ctx.fillStyle = `rgba(226, 232, 240, ${p.alpha})`;
+                ctx.fillStyle = grad;
                 ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
                 ctx.fill();
                 if (p.x - p.r > width) p.x = -p.r;
+            
             } else {
                 p.phase += 0.022;
                 p.x += p.vx + Math.sin(p.phase) * 0.2;

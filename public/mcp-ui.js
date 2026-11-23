@@ -315,15 +315,20 @@
 
             if (d.lastChatId > knownChatId) {
                 knownChatId = d.lastChatId;
-                // 如果当前页面数组里还没有这条最新 ID，说明是外部 MCP 推送来的！
-                const localMax = (typeof chatHistory !== 'undefined' && chatHistory.length)
+                const getLocalMax = () => (typeof chatHistory !== 'undefined' && chatHistory.length)
                     ? Math.max(...chatHistory.map(m => Number(m.id) || 0))
                     : 0;
-                if (d.lastChatId > localMax && typeof loadChatHistory === 'function') {
+                const prevLocalMax = getLocalMax();
+                if (d.lastChatId > prevLocalMax && typeof loadChatHistory === 'function') {
                     await loadChatHistory();
-                    const newest = chatHistory[chatHistory.length - 1];
-                    if (newest && newest.role === 'assistant' && typeof showCommBanner === 'function') {
-                        showCommBanner(`🔌 ${appConfig.charName || 'TA'} 发来一条消息`, String(newest.content || '').slice(0, 80), true);
+                    const newLocalMax = getLocalMax();
+                    const drawerOpen = document.getElementById('commDrawer')?.classList.contains('open');
+                    // 只有真正拉到了新消息，且聊天框没打开时，才弹顶栏通知！
+                    if (newLocalMax > prevLocalMax && !drawerOpen) {
+                        const newest = chatHistory[chatHistory.length - 1];
+                        if (newest && newest.role === 'assistant' && typeof showCommBanner === 'function') {
+                            showCommBanner(`☁️ ${appConfig.charName || 'TA'} 发来了通讯消息`, '点开小手机看看 TA 说了什么吧～', true);
+                        }
                     }
                 }
             }
@@ -335,8 +340,9 @@
                     : 0;
                 if (d.lastNoteId > localNoteMax && typeof loadNotes === 'function') {
                     await loadNotes();
-                    if (typeof showCommBanner === 'function') {
-                        showCommBanner(`📌 ${appConfig.charName || 'TA'} 贴了张新便利贴`, notesList[0]?.content || '快去书桌看看吧～', false);
+                    const newestNote = notesList[0];
+                    if (newestNote && newestNote.author !== 'user' && typeof showCommBanner === 'function') {
+                        showCommBanner(`📌 ${appConfig.charName || 'TA'} 贴了张新便利贴`, newestNote.content || '快去书桌看看吧～', false);
                     }
                 }
             }
