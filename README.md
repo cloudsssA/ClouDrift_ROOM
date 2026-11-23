@@ -1,6 +1,6 @@
 # ☁️ ClouDrift · 云隙- AI 虚拟陪伴读书室
 
-![Version](https://img.shields.io/badge/Version-v2.1.0-f59e0b?style=flat-square)
+![Version](https://img.shields.io/badge/Version-v1.1.0-f59e0b?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-PC%20%26%20Mobile%20LAN-10b981?style=flat-square)
 ![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square)
 [![Changelog](https://img.shields.io/badge/Changelog-更新日志-6366f1?style=flat-square)](./CHANGELOG.md)
@@ -8,7 +8,7 @@
 ![Local-First](https://img.shields.io/badge/Local--First-Node.js%20%2B%20SQLite-10b981?style=flat-square)
 ![MCP](https://img.shields.io/badge/MCP-HTTP%20%7C%20SSE%20%7C%20Stdio-a855f7?style=flat-square)
 ![Author](https://img.shields.io/badge/Author-三云%20%7C%20cloudsssA-38bdf8?style=flat-square)
-> ✨ **最新动态 (v2.1.0)**：重磅上线 **💌 角色随机区间主动搭话（专注免打扰）**、**📱 手机局域网双端无缝直连 & iOS 深度适配**、**🕒 通讯聊天时间戳** 与 **💾 全站媒体本地落盘极速加载**！详细改动请移步 👉 [更新日志 CHANGELOG.md](./CHANGELOG.md)
+> ✨ **最新动态 (v1.1.0)**：重磅上线 **💌 角色随机区间主动搭话（专注免打扰）**、**📱 手机局域网双端无缝直连 & iOS 深度适配**、**🕒 通讯聊天时间戳** 与 **💾 全站媒体本地落盘极速加载**！详细改动请移步 👉 [更新日志 CHANGELOG.md](./CHANGELOG.md)
 
 
 > ⚡ **开工于2026.11.21，历时不到 16 小时爆肝打造出初版，后续持续更新中！**  
