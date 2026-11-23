@@ -1,12 +1,17 @@
 # ☁️ ClouDrift · 云隙- AI 虚拟陪伴读书室
 
-![Version](https://img.shields.io/badge/Version-v1.0.0-60a5fa?style=flat-square)
+![Version](https://img.shields.io/badge/Version-v2.1.0-f59e0b?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-PC%20%26%20Mobile%20LAN-10b981?style=flat-square)
+![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square)
+[![Changelog](https://img.shields.io/badge/Changelog-更新日志-6366f1?style=flat-square)](./CHANGELOG.md)
 ![Built In](https://img.shields.io/badge/Built%20in-16%20Hours-f59e0b?style=flat-square)
 ![Local-First](https://img.shields.io/badge/Local--First-Node.js%20%2B%20SQLite-10b981?style=flat-square)
 ![MCP](https://img.shields.io/badge/MCP-HTTP%20%7C%20SSE%20%7C%20Stdio-a855f7?style=flat-square)
 ![Author](https://img.shields.io/badge/Author-三云%20%7C%20cloudsssA-38bdf8?style=flat-square)
+> ✨ **最新动态 (v2.1.0)**：重磅上线 **💌 角色随机区间主动搭话（专注免打扰）**、**📱 手机局域网双端无缝直连 & iOS 深度适配**、**🕒 通讯聊天时间戳** 与 **💾 全站媒体本地落盘极速加载**！详细改动请移步 👉 [更新日志 CHANGELOG.md](./CHANGELOG.md)
 
-> ⚡ **开工于2026.11.21，历时不到 16 小时爆肝打造的首个完整正式版 `v1.0.0`！**  
+
+> ⚡ **开工于2026.11.21，历时不到 16 小时爆肝打造出初版，后续持续更新中！**  
 > 一个**本地优先（Local-First）**、**iOS 美学灵感驱动**的 AI 虚拟陪伴读书室——既可开箱独立畅玩，也内置零依赖标准 **MCP Server**，支持把整座自习室无缝外接给你已有的任意 AI 陪伴大脑。融合 **番茄钟深度专注 + 内置拟人化小手机 + 一角色一库物理隔离记忆 + 共享阅读器 + 本地音频波形剪辑台 + 跨次元像素桌宠 + MCP 外部桥接**，让屏幕两端的陪伴真正拥有“呼吸感”与“生活感”。
 
 在这里，TA 不是冷冰冰的问答对话框，而是隔着云端与你跨屏连线的「自习室搭子」——能看见你书桌上的相框、天气、饮品和待办，能陪你一起读 PDF 文献并在页边偷偷写批注，会在你切屏摸鱼时谴责留言，甚至会在你请求切歌时严厉驳回✨
@@ -50,6 +55,15 @@
 * **AI 语音消息（MiniMax TTS）**：支持自行配置 MiniMax API 与专属音色，角色可在聊天中发送语音气泡，并支持一键语音转文字。
 * **Tavily 联网搜索**：内置 Tavily 搜索插件，可自定义每轮联网参考条数——闲聊追热点、自习顺手查论文资料一把抓。
 * **多角色卡 & 多用户人设仓库**：支持建库管理多个 AI 角色（独立记忆库 + 独立预设套装）以及多个用户人设，随时切换不同平行宇宙。
+
+- **💌 角色主动通讯（随机盲盒区间 · 专注免打扰）**：
+  - 支持在设置中开启双端同步的「主动搭话」开关，并自由设定随机静默区间（如 `20 ~ 45` 分钟）。网页停留期间，TA 会在区间内随机挑时间结合当下房间状态、天气、音乐与记忆主动发来文字或语音消息，告别生硬的整点报时感；
+  - 内置 **专注期自动免打扰机制**，进入倒计时学习状态时自动暂停打扰，陪你安心冲刺；
+  - 主动消息触发词已完整接入「🎛️ 预设圣殿（共 13 项全场景热编辑）」，可随时魔改 TA 的搭话风格，还内置「🧪 测一次」按钮随时验收效果。
+- **📱 电脑/手机双端局域网直连 & 微信级沉浸细节**：
+  - 支持同一 Wi-Fi 下手机浏览器零门槛直连电脑端自习室，聊天、便利贴、记忆与配置双端实时同步，深度适配 iOS Safari 交互体验；
+  - 内置 **微信同款 5 分钟动态时间胶囊**（智能显示 `HH:mm` / `昨天` / `前天` / 日期）与清爽云朵通知横幅；
+  - 全站壁纸、头像、相框与 TTS 语音消息采用本地磁盘落盘 + 静态强缓存，告别数据库臃肿，手机电脑双端秒开。
 
 ### ⏱️ 二、居中番茄钟 & 防偷懒监督
 * **百变高颜值时钟**：双击中央倒计时即可一键切换为「实时时间显示」 ；内置 **6 种数字样式 × 6 种视觉特效**，可自由切换。
