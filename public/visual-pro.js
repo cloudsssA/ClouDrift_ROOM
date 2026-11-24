@@ -1,4 +1,4 @@
-// public/visual-pro.js —— 修复小手机底部留白/左上角头像裁切/日期可读性 + 全链路高清裁剪(壁纸2.5K/头像512/相框1800) + 大号时钟 & 多形态相框
+// public/visual-pro.js —— 修复小手机底部留白/左上角头像裁切/日期可读性 + 双端2.5K高清壁纸裁剪(电脑横屏/手机竖屏) + 头像512/相框1800 + 大号时钟 & 多形态相框
 (function () {
     const VISUAL_STORE_KEY = 'study_room_visual_prefs_v1';
 
@@ -16,8 +16,9 @@
     let toolsOpen = false;
     let justSwipedOrFramedAt = 0;
 
-    // 壁纸裁剪器状态
+    // 双端壁纸裁剪器状态（支持 desktop 电脑横屏 / mobile 手机竖屏）
     let wpImg = null;
+    let wpTarget = 'desktop';
     let wpAspect = window.innerWidth / Math.max(1, window.innerHeight);
     let wpBaseScale = 1;
     let wpZoom = 1;
@@ -44,10 +45,16 @@
     function persistPrefs(syncServer = true) {
         try { localStorage.setItem(VISUAL_STORE_KEY, JSON.stringify(prefs)); } catch {}
         if (!syncServer || typeof API_BASE === 'undefined') return;
+        // 时钟字体 / 视觉特效 / 倒计时模式仅本机独立（一边帅气一边可爱互不打架！），仅把相框设置同步上云
+        const cloudPrefs = {
+            widgetShape: prefs.widgetShape,
+            widgetWidth: prefs.widgetWidth,
+            photoFrames: prefs.photoFrames
+        };
         fetch(`${API_BASE}/api/visual/settings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prefs })
+            body: JSON.stringify({ prefs: cloudPrefs })
         }).catch(() => {});
     }
 
@@ -58,14 +65,14 @@
             if (!res.ok) return;
             const data = await res.json();
             if (data?.success && data.prefs && Object.keys(data.prefs).length > 0) {
+                const { clockFont, clockEffect, clockMode, ...remoteWidgetPrefs } = data.prefs;
                 prefs = {
                     ...DEFAULT_PREFS,
-                    ...data.prefs,
+                    ...prefs,
+                    ...remoteWidgetPrefs,
                     photoFrames: { ...(prefs.photoFrames || {}), ...(data.prefs.photoFrames || {}) }
                 };
                 try { localStorage.setItem(VISUAL_STORE_KEY, JSON.stringify(prefs)); } catch {}
-                applyClockVisuals();
-                renderClockDisplay();
                 applyWidgetContainerStyle();
                 applyCurrentPhotoFrame();
             }
@@ -141,30 +148,7 @@
                 flex-shrink: 0 !important;
             }
 
-            /* ========== 2. 手机端顶栏对称重排 ========== */
-            @media (max-width: 768px) {
-                .top-bar { flex-direction: column !important; align-items: stretch !important; gap: 7px !important; width: 100%; }
-                .top-bar-left { width: 100% !important; justify-content: space-between !important; flex-wrap: nowrap !important; gap: 7px !important; }
-                .top-bar-left .mode-pill {
-                    flex: 1; min-width: 0; justify-content: center;
-                    padding: 6.5px 10px !important; font-size: 11.5px !important; border-radius: 13px !important;
-                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-                }
-                .top-bar-left .pet-top-wrap { flex-shrink: 0; }
-                .top-bar-left .pet-top-btn { padding: 6.5px 11px !important; font-size: 11.5px !important; border-radius: 13px !important; }
-                .top-bar-right {
-                    width: 100% !important; display: grid !important;
-                    grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 6px !important;
-                }
-                body.solo-mode .top-bar-right { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
-                .top-bar-right .icon-btn {
-                    width: 100% !important; padding: 7px 6px !important; border-radius: 12px !important;
-                    font-size: 11.5px !important; display: inline-flex !important;
-                    align-items: center; justify-content: center; gap: 4px; white-space: nowrap;
-                }
-            }
-
-            /* ========== 3. 大号主角时钟 + 6 套字体 + 6 种特效 ========== */
+            /* ========== 2. 大号主角时钟 + 6 套字体 + 6 种特效 ========== */
             #timerDisplay {
                 font-size: clamp(78px, 9.6vw, 134px) !important;
                 line-height: 1.0 !important;
@@ -230,7 +214,7 @@
             .vpro-chip:hover { border-color: var(--accent, #d97706); color: #fef3c7; }
             .vpro-chip.active { background: rgba(217, 119, 6, 0.26); border-color: var(--accent, #d97706); color: #fef3c7; font-weight: 600; }
 
-            /* ========== 4. 桌面相框外置舞台 ========== */
+            /* ========== 3. 桌面相框外置舞台 ========== */
             .vpro-widget-stage {
                 margin-top: clamp(10px, 1.5vh, 16px);
                 display: flex; flex-direction: column; align-items: center;
@@ -353,8 +337,6 @@
     // 模块 0：全链路高清画质升级（相框 1800px + 头像 512px Retina + 壁纸 2560px！）
     // =========================================================================
     function upgradeGlobalImageSharpness() {
-        // 1. 升级全局图片压缩器：同时检查长宽两边的最大边、高质量重采样，告别相框/聊天图发糊！
-// 1. 升级全局图片压缩器：兼容手机大图防闪退 + 保住 GIF 动图 + 高清锐利
         window.compressImageToBase64 = function (file, maxDim = 1800, quality = 0.90) {
             if (!file) return Promise.resolve('');
             if (file.type === 'image/gif' && file.size <= 4 * 1024 * 1024) {
@@ -405,7 +387,6 @@
             });
         };
 
-        // 2. 升级头像裁剪导出：直接从原图 cropImg 重绘到 512×512 高清画布（告别 240px 糊头像！）
         window.confirmAvatarCrop = function () {
             let data = '';
             if (typeof cropImg !== 'undefined' && cropImg) {
@@ -605,20 +586,47 @@
         const modal = document.getElementById('settingsModal');
         if (!modal) return;
 
-        const bgInput = document.getElementById('bgImageFileInput');
-        if (bgInput && bgInput.parentNode && !document.getElementById('cropCurrentBgBtn')) {
-            const cropBtn = document.createElement('button');
-            cropBtn.id = 'cropCurrentBgBtn';
-            cropBtn.type = 'button';
-            cropBtn.className = 'mini-btn';
-            cropBtn.innerText = '✂️ 裁剪';
-            cropBtn.title = '自由缩放拖动裁剪房间壁纸（高清 2.5K 导出）';
-            cropBtn.onclick = () => openWallpaperCropperWithCurrent();
-            const clearBtn = bgInput.parentNode.querySelector('button[onclick*="clearRoomBgImage"]');
-            if (clearBtn) bgInput.parentNode.insertBefore(cropBtn, clearBtn);
-            else bgInput.parentNode.appendChild(cropBtn);
+        // 1. 兼容双壁纸槽（电脑横屏 + 手机竖屏）各自挂入「✂️ 裁剪」按钮，彻底杜绝 insertBefore 报错！
+        const dualGrid = modal.querySelector('.bg-dual-grid');
+        if (dualGrid) {
+            const slots = [
+                { previewId: 'bgDesktopPreview', target: 'desktop', btnId: 'cropDesktopBgBtn' },
+                { previewId: 'bgMobilePreview', target: 'mobile', btnId: 'cropMobileBgBtn' }
+            ];
+            for (const slot of slots) {
+                if (document.getElementById(slot.btnId)) continue;
+                const card = document.getElementById(slot.previewId)?.closest('.bg-slot-card');
+                const btnRow = card?.querySelector('.bg-slot-btns');
+                if (!btnRow) continue;
+                const cropBtn = document.createElement('button');
+                cropBtn.id = slot.btnId;
+                cropBtn.type = 'button';
+                cropBtn.className = 'mini-btn';
+                cropBtn.innerText = '✂️ 裁剪';
+                cropBtn.title = `自由拖动缩放裁剪${slot.target === 'mobile' ? '手机竖屏' : '电脑横屏'}壁纸（2.5K高清）`;
+                cropBtn.onclick = () => openWallpaperCropperWithCurrent(slot.target);
+                const clearBtn = btnRow.querySelector('button[onclick*="clearRoomBgImage"]');
+                if (clearBtn && clearBtn.parentNode === btnRow) btnRow.insertBefore(cropBtn, clearBtn);
+                else btnRow.appendChild(cropBtn);
+            }
+        } else {
+            // 兼容旧版单壁纸结构
+            const bgInput = document.getElementById('bgImageFileInput');
+            if (bgInput && bgInput.parentNode && !document.getElementById('cropCurrentBgBtn')) {
+                const cropBtn = document.createElement('button');
+                cropBtn.id = 'cropCurrentBgBtn';
+                cropBtn.type = 'button';
+                cropBtn.className = 'mini-btn';
+                cropBtn.innerText = '✂️ 裁剪';
+                cropBtn.title = '自由缩放拖动裁剪房间壁纸（高清 2.5K 导出）';
+                cropBtn.onclick = () => openWallpaperCropperWithCurrent('desktop');
+                const clearBtn = bgInput.parentNode.querySelector('button[onclick*="clearRoomBgImage"]');
+                if (clearBtn && clearBtn.parentNode) clearBtn.parentNode.insertBefore(cropBtn, clearBtn);
+                else bgInput.parentNode.appendChild(cropBtn);
+            }
         }
 
+        // 2. 注入中心时钟字体 & 液态玻璃特效配置卡片
         if (!document.getElementById('clockStyleSettingsBox')) {
             const colorGrid = document.getElementById('cfgTimerColor')?.closest('.color-grid');
             const colorHeader = colorGrid?.previousElementSibling;
@@ -655,7 +663,7 @@
     }
 
     // =========================================================================
-    // 模块 3：真·2.5K 高清房间壁纸自由裁剪台
+    // 模块 3：真·2.5K 高清双端壁纸自由裁剪台（电脑横屏 / 手机竖屏独立保存）
     // =========================================================================
     function mountWallpaperCropModal() {
         if (document.getElementById('wallpaperCropModal')) return;
@@ -667,7 +675,7 @@
         modal.innerHTML = `
             <div class="modal-box" style="max-width:490px;">
                 <h3>
-                    <span>✂️ 房间壁纸高清裁剪台</span>
+                    <span id="wpCropModalTitle">✂️ 房间壁纸高清裁剪台</span>
                     <span style="cursor:pointer;color:#a8a29e" onclick="closeModal('wallpaperCropModal')">✕</span>
                 </h3>
                 <div class="vpro-chip-grid" style="grid-template-columns:repeat(4,1fr);">
@@ -768,31 +776,51 @@
         drawWpCropCanvas();
     }
 
-    function openWallpaperCropperFromDataUrl(dataUrl) {
+    function assignDraftWallpaper(dataUrl) {
+        if (wpTarget === 'mobile') {
+            if (typeof draftBgImageMobile !== 'undefined') draftBgImageMobile = dataUrl;
+        } else {
+            if (typeof draftBgImage !== 'undefined') draftBgImage = dataUrl;
+        }
+        if (typeof livePreviewWallpaper === 'function') livePreviewWallpaper();
+    }
+
+    function openWallpaperCropperFromDataUrl(dataUrl, target = 'desktop') {
+        wpTarget = target === 'mobile' ? 'mobile' : 'desktop';
         wpRawOriginal = dataUrl;
+        const titleEl = document.getElementById('wpCropModalTitle');
+        if (titleEl) {
+            titleEl.innerText = wpTarget === 'mobile' ? '✂️ 手机竖屏壁纸裁剪台' : '✂️ 电脑横屏壁纸裁剪台';
+        }
         const img = new Image();
         img.onload = () => {
             wpImg = img;
             document.getElementById('wallpaperCropModal')?.classList.add('open');
-            setWpAspect('screen');
+            const defaultAr = wpTarget === 'mobile'
+                ? '9:19'
+                : (window.innerWidth >= window.innerHeight ? 'screen' : '16:9');
+            setWpAspect(defaultAr);
         };
         img.src = dataUrl;
     }
 
-    function openWallpaperCropperWithCurrent() {
-        const cur = (typeof draftBgImage !== 'undefined' && draftBgImage) || (typeof appConfig !== 'undefined' && appConfig.bgImage) || '';
+    function openWallpaperCropperWithCurrent(target = 'desktop') {
+        const isMob = target === 'mobile';
+        const cur = isMob
+            ? ((typeof draftBgImageMobile !== 'undefined' && draftBgImageMobile) || (typeof appConfig !== 'undefined' && appConfig.bgImageMobile) || '')
+            : ((typeof draftBgImage !== 'undefined' && draftBgImage) || (typeof appConfig !== 'undefined' && appConfig.bgImage) || '');
         if (!cur) {
             const tip = document.getElementById('bgStatusTip');
-            if (tip) tip.innerText = '⚠️ 请先点「📂 选底图」上传一张壁纸哦～';
+            if (tip) tip.innerText = `⚠️ 请先点「📂 选图」上传一张${isMob ? '手机竖屏' : '电脑横屏'}壁纸哦～`;
             return;
         }
-        openWallpaperCropperFromDataUrl(cur);
+        openWallpaperCropperFromDataUrl(cur, target);
     }
 
     function useOriginalWallpaper() {
         if (wpImg && wpRawOriginal) {
-            // 仅在超大图时温和限制长边至 2560px，保持高清锐利且秒存数据库
             const longest = Math.max(wpImg.width, wpImg.height);
+            let outData = wpRawOriginal;
             if (longest > 2560) {
                 const ratio = 2560 / longest;
                 const c = document.createElement('canvas');
@@ -802,13 +830,11 @@
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = 'high';
                 ctx.drawImage(wpImg, 0, 0, c.width, c.height);
-                draftBgImage = c.toDataURL('image/jpeg', 0.94);
-            } else {
-                draftBgImage = wpRawOriginal;
+                outData = c.toDataURL('image/jpeg', 0.94);
             }
-            if (typeof livePreviewWallpaper === 'function') livePreviewWallpaper();
+            assignDraftWallpaper(outData);
             const tip = document.getElementById('bgStatusTip');
-            if (tip) tip.innerText = '✅ 已载入高清原图壁纸预览，点底部「保存所有设置」永久生效';
+            if (tip) tip.innerText = `✅ 已载入${wpTarget === 'mobile' ? '手机竖屏' : '电脑横屏'}高清原图，点底部「保存所有设置」永久生效`;
         }
         closeModal('wallpaperCropModal');
     }
@@ -817,7 +843,6 @@
         const previewCanvas = document.getElementById('wpCropCanvas');
         if (!previewCanvas || !wpImg) { closeModal('wallpaperCropModal'); return; }
 
-        // 修复核心分辨率公式：1 / (wpBaseScale * wpZoom) 才是原图像素到预览画布像素的真实倍率！
         const cw = previewCanvas.width;
         const ch = previewCanvas.height;
         const nativePixelsPerCanvasPx = 1 / Math.max(0.0001, wpBaseScale * wpZoom);
@@ -843,28 +868,27 @@
             drawH
         );
 
-        draftBgImage = outCanvas.toDataURL('image/jpeg', 0.94);
-        if (typeof livePreviewWallpaper === 'function') livePreviewWallpaper();
+        assignDraftWallpaper(outCanvas.toDataURL('image/jpeg', 0.94));
         const tip = document.getElementById('bgStatusTip');
-        if (tip) tip.innerText = `✅ 高清壁纸裁剪完成 (${outW}×${outH})，点底部「保存所有设置」永久生效！`;
+        if (tip) tip.innerText = `✅ ${wpTarget === 'mobile' ? '手机竖屏' : '电脑横屏'}高清裁剪完成 (${outW}×${outH})，点底部「保存所有设置」永久生效！`;
         closeModal('wallpaperCropModal');
     }
 
     function hookWallpaperUpload() {
-        window.handleBgImageUpload = async function (event) {
+        window.handleBgImageUpload = async function (event, target = 'desktop') {
             const file = event.target.files?.[0];
             if (!file) return;
+            const label = target === 'mobile' ? '手机竖屏壁纸' : '电脑横屏壁纸';
             const tip = document.getElementById('bgStatusTip');
-            if (tip) tip.innerText = '⏳ 正在无损读取原图加载裁剪台...';
+            if (tip) tip.innerText = `⏳ 正在无损读取${label}进入裁剪台...`;
             try {
-                // 直接无损读原图进裁剪台，绝不提前降分辨率！
                 const rawUrl = await new Promise((resolve, reject) => {
                     const r = new FileReader();
                     r.onload = (e) => resolve(e.target.result);
                     r.onerror = reject;
                     r.readAsDataURL(file);
                 });
-                openWallpaperCropperFromDataUrl(rawUrl);
+                openWallpaperCropperFromDataUrl(rawUrl, target);
             } catch (e) {
                 if (tip) tip.innerText = '❌ 壁纸读取失败：' + e.message;
             }
@@ -1306,6 +1330,7 @@
         onWpZoom,
         useOriginalWallpaper,
         confirmWallpaperCrop,
+        openWallpaperCropperWithCurrent,
         setWidgetShape,
         setWidgetWidth,
         enterFramingMode,

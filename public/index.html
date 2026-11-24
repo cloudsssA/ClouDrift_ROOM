@@ -594,6 +594,176 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .combo-opt:hover, .combo-opt.selected { background: rgba(217, 119, 6, 0.25); color: #fef3c7; }
+        /* === 顶栏正式架构：左 [头像·线上陪伴 + 桌宠] · 右 [通讯 + ☰菜单] === */
+        #topBar {
+            position: relative !important;
+            z-index: 120 !important;
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 8px !important;
+            width: 100% !important;
+        }
+        #topBar > .top-bar-left {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 7px !important;
+            width: auto !important;
+            min-width: 0 !important;
+            flex: 0 1 auto !important;
+            margin: 0 !important;
+        }
+        #topBar > .top-bar-left .mode-pill {
+            flex-shrink: 0 !important;
+            white-space: nowrap !important;
+        }
+        #topBar > .top-bar-actions {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            gap: 7px !important;
+            width: auto !important;
+            flex-shrink: 0 !important;
+            margin: 0 0 0 auto !important;
+        }
+        /* 双端壁纸槽样式 */
+        .bg-dual-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px; }
+        .bg-slot-card { background: #141312; border: 1px solid #33302d; border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+        .bg-slot-head { display: flex; justify-content: space-between; align-items: center; font-size: 11.5px; color: #e7e5e4; font-weight: 500; }
+        .bg-slot-preview { height: 68px; border-radius: 7px; background: #1f1d1b; border: 1px dashed #3f3b37; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #78716c; overflow: hidden; cursor: pointer; }
+        .bg-slot-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .bg-slot-btns { display: flex; gap: 5px; }
+        .bg-slot-btns .mini-btn { flex: 1; text-align: center; padding: 3px 6px; font-size: 11px; }
+
+        #topBar .topbar-menu-btn { font-weight: 600; }
+        #topBar .topbar-menu-btn.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow) inset; }
+
+        /* 右侧精致下拉菜单（自动收纳小窝、角色卡、用户、记忆、配置、设置等全部插件按钮！） */
+        #topBar > .top-bar-right {
+            position: absolute !important;
+            top: calc(100% + 8px) !important;
+            right: 0 !important;
+            left: auto !important;
+            width: 176px !important;
+            max-width: calc(100vw - 28px) !important;
+            padding: 8px !important;
+            border-radius: 16px !important;
+            background: rgba(28, 26, 24, 0.94) !important;
+            backdrop-filter: blur(22px) !important;
+            -webkit-backdrop-filter: blur(22px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.16) !important;
+            box-shadow: 0 18px 44px rgba(0, 0, 0, 0.52) !important;
+            display: flex !important;
+            flex-direction: column !important;
+            flex-wrap: nowrap !important;
+            align-items: stretch !important;
+            gap: 6px !important;
+            z-index: 160 !important;
+            opacity: 0 !important;
+            transform: translateY(-8px) scale(0.96) !important;
+            transform-origin: top right !important;
+            pointer-events: none !important;
+            transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1) !important;
+        }
+        #topBar > .top-bar-right.menu-open {
+            opacity: 1 !important;
+            transform: translateY(0) scale(1) !important;
+            pointer-events: auto !important;
+        }
+        #topBar > .top-bar-right .icon-btn {
+            width: 100% !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 8px !important;
+            padding: 9px 12px !important;
+            border-radius: 11px !important;
+            font-size: 13px !important;
+            color: #f5f5f4 !important;
+            background: rgba(255, 255, 255, 0.07) !important;
+            border: 1px solid transparent !important;
+            backdrop-filter: none !important;
+            transform: none !important;
+        }
+        #topBar > .top-bar-right .icon-btn:hover {
+            background: rgba(255, 255, 255, 0.15) !important;
+            border-color: rgba(255, 255, 255, 0.18) !important;
+        }
+        #topBar > .top-bar-right #openHomeBtn {
+            border-color: var(--accent) !important;
+            background: rgba(217, 119, 6, 0.20) !important;
+            color: #fef3c7 !important;
+        }
+
+        /* 左侧「当前陪伴角色 + 切换单人」小名片弹窗 */
+        .mode-popover {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            width: 248px;
+            max-width: calc(100vw - 28px);
+            padding: 14px;
+            border-radius: 18px;
+            background: rgba(28, 26, 24, 0.95);
+            backdrop-filter: blur(22px);
+            -webkit-backdrop-filter: blur(22px);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.58);
+            color: #f5f5f4;
+            z-index: 160;
+            opacity: 0;
+            transform: translateY(-8px) scale(0.96);
+            transform-origin: top left;
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+            display: flex;
+            flex-direction: column;
+            gap: 11px;
+        }
+        .mode-popover.open {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+        .mode-pop-head { display: flex; align-items: center; gap: 11px; }
+        .mode-pop-ava {
+            width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+            background: var(--accent); color: var(--text-on-accent);
+            border: 2px solid var(--accent); overflow: hidden;
+            display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px;
+        }
+        .mode-pop-ava img { width: 100%; height: 100%; object-fit: cover; }
+        .mode-pop-info { min-width: 0; flex: 1; }
+        .mode-pop-name { font-size: 14.5px; font-weight: 600; color: #fef3c7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .mode-pop-sub { font-size: 11.5px; color: #a8a29e; margin-top: 2px; }
+        .mode-pop-actions { display: flex; flex-direction: column; gap: 6px; }
+        .mode-pop-btn {
+            width: 100%; padding: 8px 11px; border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.07); color: #f5f5f4;
+            font-size: 12.5px; font-weight: 500; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+            transition: all 0.16s;
+        }
+        .mode-pop-btn:hover { background: rgba(255, 255, 255, 0.15); border-color: var(--accent); }
+        .mode-pop-btn.primary { background: rgba(217, 119, 6, 0.24); border-color: var(--accent); color: #fef3c7; }
+
+        @media (max-width: 768px) {
+            #topBar { gap: 6px !important; }
+            #topBar > .top-bar-left, #topBar > .top-bar-actions { gap: 5px !important; }
+            #topBar .mode-pill, #topBar > .top-bar-actions .icon-btn { padding: 5px 10px !important; font-size: 12px !important; }
+        }
+        @media (max-width: 480px) {
+            #topBar .topbar-menu-text { display: none; }
+            #topBar .topbar-menu-btn { padding: 5px 10px !important; font-size: 13.5px !important; }
+        }
     </style>
 <link rel="stylesheet" href="/pet/pet.css">
 </head>
@@ -607,12 +777,31 @@
     <div class="ambient-light"></div>
 
     <!-- 顶部清爽导航栏 -->
-    <div class="top-bar">
+    <div class="top-bar" id="topBar">
         <div class="top-bar-left">
-            <span class="mode-pill" id="modeBadge" onclick="toggleSoloMode()" title="点击切换【线上陪伴】/【单人专注模式】">🧠 线上连线中</span>
+            <span class="mode-pill" id="modeBadge" onclick="toggleModePopover(event)" title="查看当前陪伴角色 / 切换单人模式">🧠 线上陪伴</span>
         </div>
-        <div class="top-bar-right">
+        <div class="top-bar-actions">
             <button class="icon-btn icon-btn-blue ai-only" onclick="toggleChatDrawer()">✉️ 通讯<span class="unread-dot" id="commUnreadDot"></span></button>
+            <button class="icon-btn topbar-menu-btn" id="topBarMenuBtn" type="button" onclick="toggleTopBarMenu(event)" title="展开功能菜单">☰<span class="topbar-menu-text"> 菜单</span></button>
+        </div>
+        <!-- 左侧陪伴角色名片 + 切换单人浮层 -->
+        <div class="mode-popover" id="modePopover" onclick="event.stopPropagation()">
+            <div class="mode-pop-head">
+                <div class="mode-pop-ava" id="modePopAvatar">TA</div>
+                <div class="mode-pop-info">
+                    <div class="mode-pop-name" id="modePopName">连线搭子</div>
+                    <div class="mode-pop-sub" id="modePopStatus">✨ 正在线上陪伴自习中</div>
+                </div>
+            </div>
+            <div class="mode-pop-actions">
+                <button class="mode-pop-btn ai-only" type="button" onclick="closeTopBarPopovers();openCharacterModal()">🪪 查看 / 切换角色卡</button>
+                <button class="mode-pop-btn primary" type="button" id="modePopSoloBtn" onclick="closeTopBarPopovers();toggleSoloMode()">🧘 切换为单人专注模式</button>
+            </div>
+        </div>
+        <!-- 右侧收纳下拉菜单 -->
+        <div class="top-bar-right" id="topBarDropdown">
+            <button class="icon-btn" id="openHomeBtn" onclick="window.CloudHome && window.CloudHome.open()">🏡 小窝</button>
             <button class="icon-btn ai-only" onclick="openCharacterModal()">🪪 角色卡</button>
             <button class="icon-btn" onclick="openUserModal()">👤 用户</button>
             <button class="icon-btn ai-only" onclick="openPromptConfigModal()">🎛️ 配置</button>
@@ -1047,6 +1236,10 @@
                     <input type="checkbox" id="cfgNotifyPauseTimeout" checked>
                 </label>
                 <label class="switch-row">
+                    <span>完整完成一轮专注时通知 TA<small>关闭后专注通关将安静结算，不触发 TA 发通讯消息（0 Token）</small></span>
+                    <input type="checkbox" id="cfgNotifyFocusComplete" checked>
+                </label>
+                <label class="switch-row">
                     <span>允许 TA 主动发通讯消息<small>网页开启且静默超过设定区间时 TA 会主动搭话（专注期间自动免打扰，帮你安心学习。）</small></span>
                     <input type="checkbox" id="cfgProactiveChat">
                 </label>
@@ -1063,12 +1256,28 @@
             </div>
 
             <div class="settings-section-box">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                    <span style="font-size:13px;color:#fef3c7;font-weight:500;">🖼️ 自定义房间壁纸（适配横竖屏）</span>
-                    <div style="display:flex;gap:6px;">
-                        <input type="file" id="bgImageFileInput" accept="image/*" style="display:none" onchange="handleBgImageUpload(event)">
-                        <button class="mini-btn" type="button" onclick="document.getElementById('bgImageFileInput').click()">📂 选底图</button>
-                        <button class="mini-btn" type="button" onclick="clearRoomBgImage()">清除</button>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:6px;flex-wrap:wrap;">
+                    <span style="font-size:13px;color:#fef3c7;font-weight:500;">🖼️ 双端自定义壁纸（横竖屏自动切换）</span>
+                    <span id="bgViewportBadge" style="font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(217,119,6,0.22);color:#fde68a;">检测画幅中</span>
+                </div>
+                <input type="file" id="bgImageFileInput" accept="image/*" style="display:none" onchange="handleBgImageUpload(event, 'desktop')">
+                <input type="file" id="bgImageMobileFileInput" accept="image/*" style="display:none" onchange="handleBgImageUpload(event, 'mobile')">
+                <div class="bg-dual-grid">
+                    <div class="bg-slot-card">
+                        <div class="bg-slot-head"><span>💻 电脑 / 横屏</span></div>
+                        <div class="bg-slot-preview" id="bgDesktopPreview" onclick="document.getElementById('bgImageFileInput').click()">点此选横屏底图</div>
+                        <div class="bg-slot-btns">
+                            <button class="mini-btn" type="button" onclick="document.getElementById('bgImageFileInput').click()">📂 选图</button>
+                            <button class="mini-btn" type="button" onclick="clearRoomBgImage('desktop')">清除</button>
+                        </div>
+                    </div>
+                    <div class="bg-slot-card">
+                        <div class="bg-slot-head"><span>📱 手机 / 竖屏</span></div>
+                        <div class="bg-slot-preview" id="bgMobilePreview" onclick="document.getElementById('bgImageMobileFileInput').click()">留空则沿用横屏图</div>
+                        <div class="bg-slot-btns">
+                            <button class="mini-btn" type="button" onclick="document.getElementById('bgImageMobileFileInput').click()">📂 选图</button>
+                            <button class="mini-btn" type="button" onclick="clearRoomBgImage('mobile')">清除</button>
+                        </div>
                     </div>
                 </div>
                 <div class="form-group">
@@ -1088,7 +1297,7 @@
                         <input type="range" id="cfgBgDim" min="0" max="0.75" step="0.02" value="0.32" oninput="livePreviewWallpaper()">
                     </div>
                 </div>
-                <div id="bgStatusTip" style="font-size:11px;color:#a8a29e;margin-top:4px;">未设置壁纸（当前显示纯色底色）</div>
+                <div id="bgStatusTip" style="font-size:11px;color:#a8a29e;margin-top:4px;">根据窗口横竖屏画幅自动切换对应壁纸</div>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -1210,10 +1419,10 @@
             systemPreset: '', defaultSystemPreset: '', activeCharKey: '',
             inkColor: '#1c1917', noteColor: '#fef08a',
             pageBgColor: '#1a1918', cardBgColor: '#2a2826', accentColor: '#d97706', timerColor: '#fef3c7',
-            bgImage: '', bgMode: 'cover', bgBlur: 0, bgDim: 0.32,
+            bgImage: '', bgImageMobile: '', bgMode: 'cover', bgBlur: 0, bgDim: 0.32,
             contextLimit: 24, memoryCount: 0
         };
-        let draftCharAvatar = '', draftUserAvatar = '', draftActiveCharKey = '', draftUseQuickRelation = false, draftBgImage = '';
+        let draftCharAvatar = '', draftUserAvatar = '', draftActiveCharKey = '', draftUseQuickRelation = false, draftBgImage = '', draftBgImageMobile = '';
         let currentBookId = null, currentBookSavedToShelf = true, selectedQuote = '', editingHighlightId = null, selectionDebounceTimer = null;
         let pendingImportContent = '';
         let notesList = [], currentNoteIdx = 0, chatHistory = [], highlightsList = [], widgetPhotos = [], currentWidgetIdx = 0, savedCharacters = [], toastBannerTimer = null;
@@ -1323,20 +1532,35 @@
             root.style.setProperty('--toast-color', cardLight ? '#b45309' : '#fbbf24');
             root.style.setProperty('--text-on-accent', accLight ? '#1c1917' : '#ffffff');
         }
-        function applyWallpaper(bgImage, bgMode = 'cover', bgBlur = 0, bgDim = 0.32) {
+        function isPortraitViewport() {
+            return window.innerHeight > window.innerWidth;
+        }
+        function resolveActiveWallpaper(desktopImg, mobileImg) {
+            return isPortraitViewport() ? (mobileImg || desktopImg || '') : (desktopImg || mobileImg || '');
+        }
+        function updateBgSlotPreviews() {
+            const dEl = document.getElementById('bgDesktopPreview');
+            const mEl = document.getElementById('bgMobilePreview');
+            const badge = document.getElementById('bgViewportBadge');
+            if (dEl) dEl.innerHTML = draftBgImage ? `<img src="${draftBgImage}" alt="横屏壁纸">` : '点此选横屏底图';
+            if (mEl) mEl.innerHTML = draftBgImageMobile ? `<img src="${draftBgImageMobile}" alt="竖屏壁纸">` : '留空则沿用横屏图';
+            if (badge) badge.innerText = isPortraitViewport() ? '当前画幅：📱 竖屏' : '当前画幅：💻 横屏';
+        }
+        function applyWallpaper(bgImage, bgMode = 'cover', bgBlur = 0, bgDim = 0.32, bgImageMobile = appConfig.bgImageMobile) {
+            const activeBg = resolveActiveWallpaper(bgImage, bgImageMobile);
             const layer = document.getElementById('roomBgLayer');
             const backdrop = document.getElementById('roomBgBackdrop');
             const mainImg = document.getElementById('roomBgMain');
             const overlay = document.getElementById('roomBgOverlay');
-            if (!bgImage) {
+            if (!activeBg) {
                 layer.classList.remove('active', 'mode-blur');
                 backdrop.src = ''; mainImg.src = '';
                 return;
             }
             layer.classList.add('active');
             layer.classList.toggle('mode-blur', bgMode === 'blur');
-            if (backdrop.src !== bgImage) backdrop.src = bgImage;
-            if (mainImg.src !== bgImage) mainImg.src = bgImage;
+            if (backdrop.src !== activeBg) backdrop.src = activeBg;
+            if (mainImg.src !== activeBg) mainImg.src = activeBg;
             const blurPx = Math.max(0, parseFloat(bgBlur) || 0);
             mainImg.style.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
             mainImg.style.transform = (bgMode === 'cover' && blurPx > 0) ? `scale(${(1 + blurPx * 0.008).toFixed(3)})` : 'none';
@@ -1362,23 +1586,34 @@
             const dim = parseFloat(document.getElementById('cfgBgDim').value) || 0;
             document.getElementById('bgBlurVal').innerText = `${blur}px`;
             document.getElementById('bgDimVal').innerText = `${Math.round(dim * 100)}%`;
-            applyWallpaper(draftBgImage, mode, blur, dim);
+            updateBgSlotPreviews();
+            applyWallpaper(draftBgImage, mode, blur, dim, draftBgImageMobile);
         }
-        async function handleBgImageUpload(event) {
+        async function handleBgImageUpload(event, target = 'desktop') {
             const file = event.target.files?.[0]; if (!file) return;
-            document.getElementById('bgStatusTip').innerText = '⏳ 正在优化压缩壁纸...';
+            const label = target === 'mobile' ? '手机竖屏壁纸' : '电脑横屏壁纸';
+            document.getElementById('bgStatusTip').innerText = `⏳ 正在优化压缩${label}...`;
             try {
-                draftBgImage = await compressImageToBase64(file, 1600, 0.84);
-                document.getElementById('bgStatusTip').innerText = '✅ 壁纸已加载预览，点底部「保存所有设置」永久生效';
+                const compressed = await compressImageToBase64(file, 1600, 0.84);
+                if (target === 'mobile') draftBgImageMobile = compressed;
+                else draftBgImage = compressed;
+                document.getElementById('bgStatusTip').innerText = `✅ ${label}已就绪，点底部「保存所有设置」永久生效`;
                 livePreviewWallpaper();
             } catch (e) { document.getElementById('bgStatusTip').innerText = '❌ 壁纸读取失败：' + e.message; }
             event.target.value = '';
         }
-        function clearRoomBgImage() {
-            draftBgImage = '';
-            document.getElementById('bgStatusTip').innerText = '已清除壁纸（保存后生效）';
-            applyWallpaper('');
+        function clearRoomBgImage(target = 'desktop') {
+            if (target === 'mobile') draftBgImageMobile = '';
+            else draftBgImage = '';
+            document.getElementById('bgStatusTip').innerText = `已清除${target === 'mobile' ? '手机竖屏' : '电脑横屏'}壁纸（保存后生效）`;
+            livePreviewWallpaper();
         }
+        // 旋转屏幕或把电脑窗口拉窄成竖屏时，实时无感切换壁纸！
+        window.addEventListener('resize', () => {
+            const settingsOpen = document.getElementById('settingsModal')?.classList.contains('open');
+            if (settingsOpen) livePreviewWallpaper();
+            else applyWallpaper(appConfig.bgImage, appConfig.bgMode, appConfig.bgBlur, appConfig.bgDim, appConfig.bgImageMobile);
+        });
         function resetDefaultColors() {
             document.getElementById('cfgPageBgColor').value = '#1a1918'; document.getElementById('cfgCardBgColor').value = '#2a2826';
             document.getElementById('cfgAccentColor').value = '#d97706'; document.getElementById('cfgTimerColor').value = '#fef3c7';
@@ -1404,21 +1639,71 @@
         function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
         // 🧘 单人专注模式切换
+        function closeTopBarPopovers() {
+            document.getElementById('modePopover')?.classList.remove('open');
+            document.getElementById('topBarDropdown')?.classList.remove('menu-open');
+            document.getElementById('topBarMenuBtn')?.classList.remove('active');
+        }
+        window.closeTopBarPopovers = closeTopBarPopovers;
+
+        function toggleModePopover(e) {
+            if (e) e.stopPropagation();
+            const pop = document.getElementById('modePopover');
+            const willOpen = pop && !pop.classList.contains('open');
+            closeTopBarPopovers();
+            window.StudyPet?.closePanel?.();
+            if (willOpen) pop.classList.add('open');
+        }
+
+        function toggleTopBarMenu(e) {
+            if (e) e.stopPropagation();
+            const menu = document.getElementById('topBarDropdown');
+            const btn = document.getElementById('topBarMenuBtn');
+            const willOpen = menu && !menu.classList.contains('menu-open');
+            closeTopBarPopovers();
+            window.StudyPet?.closePanel?.();
+            if (willOpen) {
+                menu.classList.add('menu-open');
+                btn?.classList.add('active');
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#topBar')) closeTopBarPopovers();
+        });
+        document.getElementById('topBarDropdown')?.addEventListener('click', (e) => {
+            if (e.target.closest('button')) closeTopBarPopovers();
+        });
+
         function applySoloModeUI() {
             const isSolo = Boolean(appConfig.soloMode);
             document.body.classList.toggle('solo-mode', isSolo);
             const name = appConfig.charName || '连线搭子';
             const badge = document.getElementById('modeBadge');
+            const popAva = document.getElementById('modePopAvatar');
+            const popName = document.getElementById('modePopName');
+            const popStatus = document.getElementById('modePopStatus');
+            const popSoloBtn = document.getElementById('modePopSoloBtn');
+
             if (isSolo) {
-                badge.innerHTML = `🧘 单人专注模式 <span class="mode-switch-hint">· 点此连线</span>`;
+                badge.innerHTML = `🧘 单人专注`;
+                if (popAva) popAva.innerHTML = '🧘';
+                if (popName) popName.innerText = '单人专注模式';
+                if (popStatus) popStatus.innerText = '0 Token 静谧自习中 · 不触发 AI 互动';
+                if (popSoloBtn) popSoloBtn.innerText = `✨ 恢复与 ${name} 线上陪伴`;
                 document.getElementById('commDrawer').classList.remove('open');
                 document.getElementById('musicToast').innerText = '单人专注模式 · 自由播放与切歌';
                 document.getElementById('emptyNoteText').innerHTML = '书桌空空的～<br>点「✍️ 贴条」给自己留张便签吧';
                 if (!sessionActive) document.getElementById('timerStatusLabel').innerText = 'SOLO FOCUS · 纯享单人专注';
             } else {
+                const avaHtml = renderAvatarHtml(appConfig.charAvatar, name);
                 badge.innerHTML = appConfig.mode === 'mcp'
-                    ? `🔌 MCP 外部连线中 <span class="mode-switch-hint">· 切单人</span>`
-                    : `<span class="mini-avatar-dot">${renderAvatarHtml(appConfig.charAvatar, name)}</span> 线上陪伴 · ${escapeHtml(name)} <span class="mode-switch-hint">· 切单人</span>`;
+                    ? `<span class="mini-avatar-dot">${avaHtml}</span> MCP连线`
+                    : `<span class="mini-avatar-dot">${avaHtml}</span> 线上陪伴`;
+                if (popAva) popAva.innerHTML = avaHtml;
+                if (popName) popName.innerText = name;
+                if (popStatus) popStatus.innerText = appConfig.mode === 'mcp' ? '🔌 MCP 外部框架连线中' : '✨ 正在线上陪伴自习中';
+                if (popSoloBtn) popSoloBtn.innerText = '🧘 切换为单人专注模式';
                 document.getElementById('musicToast').innerText = '点击唱片播放 · 切歌需经 TA 同意';
                 document.getElementById('emptyNoteText').innerHTML = '书桌空空的～<br>可以点「✍️ 贴条」留言，或「✨ 戳TA」讨纸条';
                 if (!sessionActive) document.getElementById('timerStatusLabel').innerText = 'ONLINE FOCUS · 休闲状态';
@@ -1446,7 +1731,7 @@
                 const data = await (await fetch(`${API_BASE}/api/config`)).json();
                 appConfig = { ...appConfig, ...data };
                 applyThemeColors(appConfig.pageBgColor, appConfig.cardBgColor, appConfig.accentColor, appConfig.timerColor);
-                applyWallpaper(appConfig.bgImage, appConfig.bgMode, appConfig.bgBlur, appConfig.bgDim);
+                applyWallpaper(appConfig.bgImage, appConfig.bgMode, appConfig.bgBlur, appConfig.bgDim, appConfig.bgImageMobile);
                 const name = appConfig.charName || '连线搭子';
                 document.getElementById('imCharName').innerText = name;
                 document.getElementById('imHeaderAvatar').innerHTML = renderAvatarHtml(appConfig.charAvatar, name);
@@ -1456,6 +1741,8 @@
         }
 
         function showCommBanner(title, text, showUnread = false) {
+            const isMobileDevice = window.innerWidth <= 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            if (isMobileDevice && String(title).includes('切屏')) return;
             const banner = document.getElementById('commToastBanner');
             document.getElementById('toastAvatar').innerHTML = appConfig.soloMode ? '🧘' : renderAvatarHtml(appConfig.charAvatar, appConfig.charName);
             document.getElementById('toastTitle').innerText = title;
@@ -1545,12 +1832,17 @@
         }
         async function clearAllMemory() {
             const name = appConfig.charName || 'TA';
-            if (!confirm(`确定要清空【${name}】的专属连续记忆与通讯记录吗？（其他角色卡不受影响）`)) return;
-            await fetch(`${API_BASE}/api/memory?clearChat=true`, { method: 'DELETE' });
-            chatHistory = []; renderChatMessages([]); appConfig.memoryCount = 0;
+            if (!confirm(`确定要清空【${name}】的专属连续记忆吗？（其他角色卡不受影响）`)) return;
+            const keepChatBubbles = confirm(`是否「保留通讯聊天气泡」方便以后回看？\n\n点【确定】：仅清空记忆，保留聊天记录气泡\n点【取消】：连同聊天气泡一起彻底清空`);
+            await fetch(`${API_BASE}/api/memory?clearChat=${keepChatBubbles ? 'false' : 'true'}`, { method: 'DELETE' });
+            if (!keepChatBubbles) {
+                chatHistory = [];
+                renderChatMessages([]);
+            }
+            appConfig.memoryCount = 0;
             const lbl = document.getElementById('memoryCountLabel');
             if (lbl) lbl.innerText = `【${name}】独立记忆 · 已存 0 条`;
-            showCommBanner('🧹 记忆已归零', `【${name}】的上下文与通讯记录已全部清空，开启全新连线～`, false);
+            showCommBanner('🧹 记忆已归零', keepChatBubbles ? `已清空【${name}】的记忆，聊天气泡已为你保留～` : `【${name}】的记忆与聊天气泡已全部清空～`, false);
         }
 
         // 角色卡 / 用户卡 / 设置面板
@@ -1640,8 +1932,11 @@
             document.getElementById('cfgModelName').value = appConfig.modelName || '';
             document.getElementById('cfgNotifyFocusDecision').checked = appConfig.notifyOnFocusDecision !== false;
             document.getElementById('cfgNotifyPauseTimeout').checked = appConfig.notifyOnPauseTimeout !== false;
+            document.getElementById('cfgNotifyFocusComplete').checked = appConfig.notifyOnFocusComplete !== false;
 
             draftBgImage = appConfig.bgImage || '';
+            draftBgImageMobile = appConfig.bgImageMobile || '';
+            updateBgSlotPreviews();
             document.getElementById('cfgBgMode').value = appConfig.bgMode || 'cover';
             document.getElementById('cfgBgBlur').value = appConfig.bgBlur ?? 0;
             document.getElementById('cfgBgDim').value = appConfig.bgDim ?? 0.32;
@@ -1666,10 +1961,12 @@
                     mode: document.getElementById('cfgMode').value,
                     notifyOnFocusDecision: document.getElementById('cfgNotifyFocusDecision').checked,
                     notifyOnPauseTimeout: document.getElementById('cfgNotifyPauseTimeout').checked,
+                    notifyOnFocusComplete: document.getElementById('cfgNotifyFocusComplete').checked,
                     baseURL: document.getElementById('cfgBaseUrl').value.trim(),
                     apiKey: document.getElementById('cfgApiKey').value.trim(),
                     modelName: document.getElementById('cfgModelName').value.trim(),
                     bgImage: draftBgImage,
+                    bgImageMobile: draftBgImageMobile,
                     bgMode: document.getElementById('cfgBgMode').value,
                     bgBlur: parseFloat(document.getElementById('cfgBgBlur').value) || 0,
                     bgDim: parseFloat(document.getElementById('cfgBgDim').value) || 0,
@@ -1828,6 +2125,7 @@ let fetchedModelsList = [];
             document.getElementById('pauseWarningBar').innerText = `⏸ 45分钟内剩余暂停额度 ${m}:${s} · 耗尽将自动放弃`;
         }
         async function completeFocusNaturally() {
+            if (!sessionActive && !isFocusing) return;
             commitCurrentPause(); clearInterval(timerInterval); clearInterval(pauseInterval);
             isFocusing = false; isPaused = false; sessionActive = false;
             recordStatsSafely(selectedMinutes, true);
@@ -1836,7 +2134,7 @@ let fetchedModelsList = [];
             document.getElementById('pauseWarningBar').classList.remove('show');
             document.getElementById('startFocusBtn').innerText = '开始专注';
             document.getElementById('timerStatusLabel').innerText = appConfig.soloMode ? 'COMPLETED · 本轮专注已完成！' : 'COMPLETED · 本轮完成，批注已显影！';
-            await unlockHighlightsOnly(true, !appConfig.soloMode);
+            await unlockHighlightsOnly(true, false);
             handleFocusDecision('complete');
         }
         function openAbandonConfirm() {
@@ -1870,8 +2168,24 @@ let fetchedModelsList = [];
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
+                if (data.homeCoins && data.homeCoins.awarded > 0) {
+                    const bonusTip = data.homeCoins.bonus > 0 ? `（含满额暴击 +${data.homeCoins.bonus}✨）` : '';
+                    showCommBanner('🪙 专注通关 · 云朵币到账！', `本次入账 +${data.homeCoins.awarded} 云朵币${bonusTip}，当前余额 ${data.homeCoins.wallet?.coins ?? ''} 币～`, false);
+                }
                 if (data.skipped) return;
-                if (data.chatMsg) { chatHistory.push(data.chatMsg); renderChatMessages(chatHistory); showCommBanner(`✉️ ${appConfig.charName || 'TA'} 发来一条通讯`, data.chatMsg.content, true); }
+                const incomingMsgs = Array.isArray(data.chatMsgs) && data.chatMsgs.length
+                    ? data.chatMsgs
+                    : (data.chatMsg ? [data.chatMsg] : []);
+                if (incomingMsgs.length) {
+                    if (window.ChatPro && typeof window.ChatPro.deliverExternalBubbles === 'function') {
+                        window.ChatPro.deliverExternalBubbles(incomingMsgs);
+                    } else {
+                        for (const m of incomingMsgs) chatHistory.push(m);
+                        renderChatMessages(chatHistory);
+                    }
+                    const previewText = incomingMsgs.map(m => m.content).join(' ');
+                    showCommBanner(`✉️ ${appConfig.charName || 'TA'} 发来一条通讯`, previewText, true);
+                }
             } catch (e) { if (!appConfig.soloMode) showCommBanner('⚠️ 无法连线到 TA', e.message, false); }
         }
         function updateTimerUI() {
@@ -2318,9 +2632,22 @@ let fetchedModelsList = [];
             if (card) { card.classList.add('active-focus'); card.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => card.classList.remove('active-focus'), 2200); }
         }
 
-        async function loadLatestBook() { try { const d = await (await fetch(`${API_BASE}/api/books/latest`)).json(); if (d.book) renderBook(d.book); } catch (e) {} }
+        async function loadLatestBook() {
+            try {
+                if (appConfig.activeBookId) {
+                    const r = await fetch(`${API_BASE}/api/books/${appConfig.activeBookId}`);
+                    if (r.ok) { const d = await r.json(); if (d.book) { renderBook(d.book); return; } }
+                }
+                const d = await (await fetch(`${API_BASE}/api/books/latest`)).json();
+                if (d.book) renderBook(d.book);
+            } catch (e) {}
+        }
         function renderBook(book) {
             currentBookId = book.id;
+            if (book.id && String(appConfig.activeBookId) !== String(book.id)) {
+                appConfig.activeBookId = String(book.id);
+                fetch(`${API_BASE}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ activeBookId: String(book.id) }) }).catch(() => {});
+            }
             currentBookSavedToShelf = book.saved_to_shelf !== 0;
             document.getElementById('bookTitle').innerText = book.title;
             document.getElementById('widgetBookTitle').innerText = `《${book.title}》`;
@@ -2697,6 +3024,10 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                 const builtin = playlist.filter(s => String(s.id).startsWith('builtin-'));
                 const d = (await (await fetch(`${API_BASE}/api/playlist`)).json()).data || [];
                 playlist = [...builtin, ...d];
+                if (appConfig.activeSongId) {
+                    const hit = playlist.findIndex(s => String(s.id) === String(appConfig.activeSongId));
+                    if (hit !== -1) currentSongIndex = hit;
+                }
                 if (currentSongIndex >= playlist.length) currentSongIndex = 0;
             } catch (e) {}
         }
@@ -2755,6 +3086,10 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
             if (!s) return;
             document.getElementById('currentSongTitle').innerText = s.title;
             audioPlayer.src = s.url;
+            if (s.id && String(appConfig.activeSongId) !== String(s.id)) {
+                appConfig.activeSongId = String(s.id);
+                fetch(`${API_BASE}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ activeSongId: String(s.id) }) }).catch(() => {});
+            }
         }
         function toggleAudioPlay() {
             const disc = document.getElementById('vinylDisc'), btn = document.getElementById('playPauseBtn');
@@ -3065,5 +3400,9 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
     <script src="/mcp-ui.js"></script>
     <script src="/memo-ui.js"></script>
     <script src="/mobile-helper.js"></script>
+    <script src="/home/home-catalog.js"></script>
+    <script src="/home/home-engine.js"></script>
+    <script src="/home/home-ui.js"></script>
+    <script src="/appearance-ui.js"></script>
 </body>
 </html>

@@ -1,15 +1,15 @@
-// public/desk-widgets.js —— 左侧书桌小组件（状态标签 + 今日待办清单 + 今日专注统计）
+// public/desk-widgets.js —— 左侧书桌小组件（状态标签 + 今日待办清单 + 双端合并今日专注统计）
 (function () {
     const STORAGE_KEY_TODOS = 'study_room_todos_v1';
     const STORAGE_KEY_STATS = 'study_room_stats_v1';
     const STORAGE_KEY_MOOD = 'study_room_mood_v1';
-
     const MOODS = [
         { id: 'reading', label: '📖 沉浸阅读' },
         { id: 'writing', label: '💻 工作输出' },
         { id: 'review', label: '🧠 刷题背书' },
         { id: 'chill', label: '☕ 轻松摸鱼' }
     ];
+    const getApiBase = () => (typeof API_BASE !== 'undefined' ? API_BASE : '');
 
     function getTodayStr() {
         const d = new Date();
@@ -29,13 +29,47 @@
         const today = getTodayStr();
         try {
             const raw = JSON.parse(localStorage.getItem(STORAGE_KEY_STATS) || '{}');
-            if (raw.date === today) return raw;
+            if (raw.date === today) {
+                return {
+                    date: today,
+                    totalMinutes: Number(raw.totalMinutes) || 0,
+                    sessions: Number(raw.sessions) || 0
+                };
+            }
         } catch {}
         return { date: today, totalMinutes: 0, sessions: 0 };
     }
 
-    function saveStats(stats) {
+    function saveStats(stats, syncCloud = true) {
         localStorage.setItem(STORAGE_KEY_STATS, JSON.stringify(stats));
+        if (syncCloud) {
+            fetch(`${getApiBase()}/api/desk/stats`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(stats)
+            }).catch(() => {});
+        }
+    }
+
+    async function pullAndMergeStats() {
+        const today = getTodayStr();
+        const local = loadStats();
+        try {
+            const res = await fetch(`${getApiBase()}/api/desk/stats`);
+            if (!res.ok) return;
+            const json = await res.json();
+            const remote = json?.data;
+            if (!remote || remote.date !== today) return;
+            const merged = {
+                date: today,
+                totalMinutes: Math.max(local.totalMinutes, Number(remote.totalMinutes) || 0),
+                sessions: Math.max(local.sessions, Number(remote.sessions) || 0)
+            };
+            if (merged.totalMinutes !== local.totalMinutes || merged.sessions !== local.sessions) {
+                saveStats(merged, false);
+                render();
+            }
+        } catch {}
     }
 
     function loadMood() {
@@ -58,7 +92,6 @@
         const doneCount = todos.filter(t => t.done).length;
 
         mount.innerHTML = `
-            <!-- 1. 今日专注战绩 -->
             <div class="glass-card desk-stat-card">
                 <div class="desk-card-title">
                     <span>📊 今日专注战绩</span>
@@ -77,7 +110,6 @@
                 </div>
             </div>
 
-            <!-- 2. 此刻状态标签 -->
             <div class="glass-card desk-mood-card">
                 <div class="desk-card-title"><span>✨ 此刻桌面状态</span></div>
                 <div class="desk-mood-chips">
@@ -90,7 +122,6 @@
                 </div>
             </div>
 
-            <!-- 3. 今日自习待办清单 -->
             <div class="glass-card desk-todo-card">
                 <div class="desk-card-title">
                     <span>🎯 自习待办清单</span>
@@ -121,7 +152,11 @@
     }
 
     window.DeskWidgets = {
-        init() { render(); },
+        init() {
+            render();
+            pullAndMergeStats();
+        },
+        syncStats: pullAndMergeStats,
         setMood(label) {
             localStorage.setItem(STORAGE_KEY_MOOD, label);
             render();
@@ -146,21 +181,19 @@
             saveTodos(list);
             render();
         },
-        // 完整走完一轮：累计时长 + 完成轮数 +1
         recordCompletedMinutes(mins) {
             const stats = loadStats();
             stats.totalMinutes += Math.max(1, Math.round(mins));
             stats.sessions += 1;
-            saveStats(stats);
+            saveStats(stats, true);
             render();
         },
-        // 中途放弃但已专注满 1 分钟：仅累计实际专注时长，不加完成轮数
         recordPartialMinutes(mins) {
             const actual = Math.floor(mins);
             if (actual < 1) return;
             const stats = loadStats();
             stats.totalMinutes += actual;
-            saveStats(stats);
+            saveStats(stats, true);
             render();
         },
         getContextSummary() {
@@ -172,5 +205,8 @@
         }
     };
 
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) pullAndMergeStats();
+    });
     window.addEventListener('DOMContentLoaded', () => window.DeskWidgets.init());
 })();

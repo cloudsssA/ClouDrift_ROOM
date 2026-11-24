@@ -404,3 +404,21 @@
     .pet-actor.near-top .pet-bubble { top: 66px; }
     .pet-control-panel { left: 12px; top: 58px; }
 }
+
+/* 长宠物名防挤压自动省略 */
+.pet-top-btn {
+    max-width: 144px;
+    white-space: nowrap;
+}
+.pet-top-btn span {
+    display: inline-block;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}
+@media (max-width: 768px) {
+    .pet-top-btn { max-width: 108px; padding: 5px 10px; font-size: 12px; }
+    .pet-top-btn span { max-width: 60px; }
+}

@@ -1,4 +1,4 @@
-// server/chat-pro-routes.js —— 小手机通讯引擎 + Tavily 联网 + 角色跨次元联动(<pet>/<play>) + 统一记忆清单 + 视觉配置持久化
+// chat-pro-routes.js —— 小手机通讯引擎 + Tavily 联网 + 角色跨次元联动(<pet>/<play>)双端广播 + 统一记忆清单 + 视觉配置持久化
 const crypto = require('crypto');
 const tavily = require('./tavily-search');
 const registerMcpBridge = require('./mcp-bridge');
@@ -20,7 +20,10 @@ const DEFAULT_CHAT_THEME = {
     chatBgImage: '',
     chatBgMode: 'cover',
     chatBgBlur: 0,
-    chatBgDim: 0.35
+    chatBgDim: 0.35,
+    chatBgScale: 1,
+    chatBgX: 0,
+    chatBgY: 0
 };
 
 function ensureTurnSchema(memDb) {
@@ -56,8 +59,14 @@ function extractRoomActions(rawText) {
     const petMatch = s.match(/<pet\s*:\s*([a-z_]+)\s*>/i);
     if (petMatch && petMatch[1]) {
         const act = petMatch[1].toLowerCase().trim();
-        if (['happy', 'jump', 'feed', 'ball', 'play', 'rage'].includes(act)) {
-            actions.push({ type: 'pet', action: act === 'jump' ? 'happy' : (act === 'play' ? 'ball' : act) });
+        if (['happy', 'jump', 'pat', 'pet', 'love', 'cheer'].includes(act)) {
+            actions.push({ type: 'pet', action: 'happy' });
+        } else if (['feed', 'snack', 'eat'].includes(act)) {
+            actions.push({ type: 'pet', action: 'feed' });
+        } else if (['ball', 'play', 'toy'].includes(act)) {
+            actions.push({ type: 'pet', action: 'ball' });
+        } else if (['rage', 'poke', 'angry', 'mad', 'slap'].includes(act)) {
+            actions.push({ type: 'pet', action: 'rage' });
         }
     }
     const playMatch = s.match(/<play\s*:\s*([^<>]+?)\s*>/i);
@@ -66,6 +75,24 @@ function extractRoomActions(rawText) {
         if (q) actions.push({ type: 'play', query: q });
     }
     return actions;
+}
+
+function buildActionNoticeText(act, charName, playlistTitles = []) {
+    if (act.type === 'pet') {
+        if (act.action === 'feed') return `🍖 ${charName} 悄悄给你的桌宠空投了一份小零食！`;
+        if (act.action === 'ball') return `🎾 ${charName} 隔空陪你的桌宠丢起了弹力球！`;
+        if (act.action === 'rage') return `💢 ${charName} 隔空戳了戳桌宠，小家伙炸毛抗议了！`;
+        return `🐾 ${charName} 隔空摸了摸桌宠，小家伙原地蹦跶起来了！`;
+    }
+    if (act.type === 'play') {
+        const q = String(act.query || '').toLowerCase().trim();
+        let matched = playlistTitles.find(t => t.toLowerCase() === q)
+            || playlistTitles.find(t => t.toLowerCase().includes(q))
+            || playlistTitles.find(t => q.includes(t.toLowerCase().slice(0, 4)))
+            || act.query;
+        return `💿 ${charName} 主动把留声机切到了《${matched}》`;
+    }
+    return '';
 }
 
 function stripMetaKeepVoice(rawText) {
@@ -98,7 +125,6 @@ function parseReplyIntoSegments(rawText, { charName, splitByDollar = true, voice
             if (byDollar.length > 1) {
                 parts = byDollar;
             } else if (!chunk.includes('```') && /\r?\n\s*\r?\n/.test(chunk)) {
-                // 兼容长上下文忘写 $、改用空行分段的情况，自动拆成独立短气泡！
                 const byBlankLine = chunk.split(/\r?\n\s*\r?\n+/).map(s => s.trim()).filter(Boolean);
                 if (byBlankLine.length > 1 && byBlankLine.length <= 6 && byBlankLine.every(s => s.length <= 160)) {
                     parts = byBlankLine;
@@ -186,7 +212,8 @@ function getAvailablePlaylistTitles() {
 module.exports = function registerChatProRoutes(app, ctx) {
     tavily.registerRoutes(app, ctx);
     registerMcpBridge(app, ctx);
-const {
+
+    const {
         db, tts, presets, vault, memoEngine, mediaStore,
         getSetting, saveSetting, getBoolSetting, getActiveCharKey,
         createAIClient, getModelName, getPersonasBlock, getRoomContextSummary,
@@ -197,12 +224,36 @@ const {
     const persistMedia = (val, prefix) => (mediaStore ? mediaStore.persistMedia(val, prefix) : val);
     const toDataUrlForAI = (val) => (mediaStore ? mediaStore.toDataUrlForAI(val) : val);
 
+    // 📡 跨端角色联动广播总线（<pet> 逗桌宠 & <play> 切歌，确保手机/电脑双端同步触发！）
+    let roomActionSeq = 0;
+    const recentRoomActions = [];
+
+    function publishRoomActions(charKey, charName, actions) {
+        if (!Array.isArray(actions) || !actions.length) return 0;
+        const id = ++roomActionSeq;
+        recentRoomActions.push({ id, charKey, charName, actions, ts: Date.now() });
+        if (recentRoomActions.length > 24) recentRoomActions.shift();
+        return id;
+    }
+
+    app.get('/api/room/actions', (req, res) => {
+        const since = parseInt(req.query?.since, 10);
+        const charKey = getActiveCharKey();
+        if (req.query?.init === '1' || isNaN(since)) {
+            return res.json({ success: true, latestId: roomActionSeq, events: [] });
+        }
+        const now = Date.now();
+        const events = recentRoomActions.filter(
+            ev => ev.id > since && ev.charKey === charKey && (now - ev.ts < 300000)
+        );
+        res.json({ success: true, latestId: roomActionSeq, events });
+    });
+
     function getChatTheme() {
         const raw = getSetting('chatThemeJson', '').trim();
         if (!raw) return { ...DEFAULT_CHAT_THEME };
         try {
             const parsed = { ...DEFAULT_CHAT_THEME, ...JSON.parse(raw) };
-            // 老版本存过巨型 Base64 聊天背景图时，读取瞬间顺手抽脂转成 /uploads/ 秒加载链接
             if (parsed.chatBgImage && parsed.chatBgImage.startsWith('data:')) {
                 parsed.chatBgImage = persistMedia(parsed.chatBgImage, 'chat_bg');
                 saveSetting('chatThemeJson', JSON.stringify(parsed));
@@ -222,7 +273,10 @@ const {
             chatBgImage: typeof patch.chatBgImage === 'string' ? persistMedia(patch.chatBgImage, 'chat_bg') : cur.chatBgImage,
             chatBgMode: patch.chatBgMode === 'blur' ? 'blur' : (patch.chatBgMode === 'cover' ? 'cover' : cur.chatBgMode),
             chatBgBlur: patch.chatBgBlur !== undefined ? Math.max(0, Math.min(24, parseFloat(patch.chatBgBlur) || 0)) : cur.chatBgBlur,
-            chatBgDim: patch.chatBgDim !== undefined ? Math.max(0, Math.min(0.85, parseFloat(patch.chatBgDim) || 0)) : cur.chatBgDim
+            chatBgDim: patch.chatBgDim !== undefined ? Math.max(0, Math.min(0.85, parseFloat(patch.chatBgDim) || 0)) : cur.chatBgDim,
+            chatBgScale: patch.chatBgScale !== undefined ? Math.max(0.5, Math.min(2.4, parseFloat(patch.chatBgScale) || 1)) : (cur.chatBgScale ?? 1),
+            chatBgX: patch.chatBgX !== undefined ? Math.max(-320, Math.min(320, Math.round(Number(patch.chatBgX) || 0))) : (cur.chatBgX ?? 0),
+            chatBgY: patch.chatBgY !== undefined ? Math.max(-360, Math.min(360, Math.round(Number(patch.chatBgY) || 0))) : (cur.chatBgY ?? 0)
         };
         saveSetting('chatThemeJson', JSON.stringify(next));
         return next;
@@ -239,7 +293,7 @@ const {
             defaultChatTheme: { ...DEFAULT_CHAT_THEME },
             proactiveEnabled: getBoolSetting('proactiveEnabled', false),
             proactiveMin: Math.max(1, parseInt(getSetting('proactiveMin', '20'), 10) || 20),
-            proactiveMax: Math.max(1, parseInt(getSetting('proactiveMax', '45'), 10) || 45),
+            proactiveMax: Math.max(1, parseInt(getSetting('proactiveMax', '45'), 10) || 45)
         };
     }
 
@@ -259,7 +313,6 @@ const {
         ensureTurnSchema(memDb);
 
         const openai = createAIClient();
-        // getPersonasBlock(charKey) 已统一拼接动态备忘录，无需重复注入
         const { promptText, userName, charName } = getPersonasBlock(charKey);
         const proCfg = getProSettings();
         const voiceEnabled = getBoolSetting('voiceEnabled', false);
@@ -380,6 +433,7 @@ const {
 
         const isStaleAfterReset = getMemoryEpoch(charKey) !== reqEpoch;
         const replyMsgs = [];
+        let actionEventId = 0;
 
         if (!isStaleAfterReset) {
             const insertChat = memDb.prepare(
@@ -395,6 +449,23 @@ const {
                     kind: b.kind,
                     charLen: b.text.length
                 });
+            }
+
+            if (roomActions.length > 0) {
+                for (const act of roomActions) {
+                    const noticeText = buildActionNoticeText(act, charName, playlistTitles);
+                    if (!noticeText) continue;
+                    const sysInfo = insertChat.run(charKey, 'system', noticeText, turnId);
+                    replyMsgs.push({
+                        id: sysInfo.lastInsertRowid,
+                        role: 'system',
+                        content: noticeText,
+                        turn_id: turnId,
+                        kind: 'sys',
+                        charLen: noticeText.length
+                    });
+                }
+                actionEventId = publishRoomActions(charKey, charName, roomActions);
             }
 
             const enrichedUserMemory = extractedMemo
@@ -416,6 +487,7 @@ const {
             replyMsgs,
             searchedQueries,
             roomActions,
+            actionEventId,
             ttsWarning: ttsWarnings.join('；'),
             memoryCount: getMemoryCount(charKey)
         };
@@ -437,10 +509,10 @@ const {
         if (req.body.chatTheme && typeof req.body.chatTheme === 'object') {
             saveChatTheme(req.body.chatTheme);
         }
-        res.json({ success: true, ...getProSettings() });
         if (req.body.proactiveEnabled !== undefined) saveSetting('proactiveEnabled', req.body.proactiveEnabled ? 'true' : 'false');
         if (req.body.proactiveMin !== undefined) saveSetting('proactiveMin', Math.max(1, parseInt(req.body.proactiveMin, 10) || 20));
         if (req.body.proactiveMax !== undefined) saveSetting('proactiveMax', Math.max(1, parseInt(req.body.proactiveMax, 10) || 45));
+        res.json({ success: true, ...getProSettings() });
     });
 
     // --- 接口 B：小手机增强聊天接口 ---
@@ -534,10 +606,10 @@ const {
         if (targetTurnId) {
             const turnRows = allChats.filter(r => String(r.turn_id || '').trim() === targetTurnId);
             targetUserRows = turnRows.filter(r => r.role === 'user');
-            targetAssistantIds = turnRows.filter(r => r.role === 'assistant').map(r => r.id);
+            targetAssistantIds = turnRows.filter(r => r.role === 'assistant' || r.role === 'system').map(r => r.id);
         } else {
             let idx = allChats.length - 1;
-            while (idx >= 0 && !allChats[idx].turn_id && allChats[idx].role === 'assistant') {
+            while (idx >= 0 && !allChats[idx].turn_id && (allChats[idx].role === 'assistant' || allChats[idx].role === 'system')) {
                 targetAssistantIds.push(allChats[idx].id);
                 idx--;
             }
@@ -710,13 +782,12 @@ const {
         res.json({ success: true, deletedBubbles, deletedMemory, memoryCount: getMemoryCount(charKey) });
     });
 
-    // --- 接口 F：🧠 全局上下文记忆可视化清单（100% 真实联动水位线与统一轮数配置） ---
+    // --- 接口 F：🧠 全局上下文记忆可视化清单 ---
     app.get('/api/memory/list', (req, res) => {
         const charKey = getActiveCharKey();
         const snap = memoEngine.getWindowSnapshot(charKey);
         const { windowInfo, activeIds } = snap;
 
-        // 动态拉取条数，确保上限拉到 160~200 轮时也能完整展示所有生效区 + 已滑出历史
         const minRows = Math.max(240, windowInfo.maxContextMsgs + 80);
         const reqLimit = parseInt(req.query?.limit, 10);
         const maxRows = Math.min(1000, Math.max(minRows, isNaN(reqLimit) ? minRows : reqLimit));
@@ -737,11 +808,7 @@ const {
                         ? 'evicted'
                         : 'slid_out';
                 }
-                return {
-                    ...item,
-                    in_window: inWindow,
-                    window_reason: windowReason
-                };
+                return { ...item, in_window: inWindow, window_reason: windowReason };
             });
         }
 
@@ -799,7 +866,6 @@ const {
         res.json({ success: true, deletedMemory, deletedChat, memoryCount: getMemoryCount(charKey) });
     });
 
-    // 已统一由「📝 动态备忘录引擎」(/api/memo/update-now) 接管，下线旧手账压缩入口
     app.post('/api/memory/archive', (req, res) => {
         res.status(410).json({
             success: false,
@@ -831,6 +897,7 @@ const {
         saveSetting('visualPrefsJson', JSON.stringify(merged));
         res.json({ success: true, prefs: merged });
     });
+
     // --- 接口 H：💌 角色主动发起通讯消息 ---
     app.post('/api/chat/proactive', async (req, res) => {
         if (getBoolSetting('soloMode', false) || getSetting('mode', 'standalone') !== 'standalone') {
@@ -936,5 +1003,5 @@ const {
             res.status(400).json({ success: false, message: error.message });
         }
     });
-    console.log('📱 小手机通讯 & Tavily & 跨次元联动 & 统一记忆视图已就位');
+    console.log('📱 小手机通讯 & Tavily & 跨次元双端联动 & 统一记忆视图已就位');
 };

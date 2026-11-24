@@ -20,8 +20,12 @@
     let activeTargetEndTime = 0;
 
     // =========================================================================
-    // 1. ⏱️ 番茄钟跨刷新持久化 + 后台标签页精准校时
+    // 1. ⏱️ 番茄钟跨刷新持久化 + 后台精准校时 + 手机/电脑双端云同步
     // =========================================================================
+    const getApiBase = () => (typeof API_BASE !== 'undefined' ? API_BASE : '');
+    let lastTimerSavedAt = 0;
+    let isApplyingRemoteTimer = false;
+
     function syncDurationPillHighlight(mins) {
         const pills = document.querySelectorAll('.dur-pill');
         let matched = false;
@@ -42,54 +46,70 @@
         }
     }
 
-    function saveTimerState(override = null) {
+    function pushTimerStateToServer(payload) {
+        fetch(`${getApiBase()}/api/timer/state`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).catch(() => {});
+    }
+
+    function saveTimerState(override = null, syncCloud = true) {
+        if (isApplyingRemoteTimer) return;
         try {
             if (typeof selectedMinutes === 'undefined') return;
             const status = override?.status || (isFocusing ? 'running' : (isPaused ? 'paused' : 'idle'));
+            const nowTs = Date.now();
             const payload = {
                 status,
                 selectedMinutes,
                 totalSeconds,
                 remainingSeconds,
                 targetEndTime: status === 'running'
-                    ? (override?.targetEndTime || activeTargetEndTime || (Date.now() + remainingSeconds * 1000))
+                    ? (override?.targetEndTime || activeTargetEndTime || (nowTs + remainingSeconds * 1000))
                     : 0,
                 pauseStartTime: status === 'paused'
-                    ? (override?.pauseStartTime || currentPauseStart || Date.now())
+                    ? (override?.pauseStartTime || currentPauseStart || nowTs)
                     : null,
-                savedAt: Date.now()
+                savedAt: syncCloud ? nowTs : (lastTimerSavedAt || nowTs)
             };
             if (status === 'running') activeTargetEndTime = payload.targetEndTime;
             else activeTargetEndTime = 0;
+            if (syncCloud) lastTimerSavedAt = payload.savedAt;
             localStorage.setItem(TIMER_STORE_KEY, JSON.stringify(payload));
+            if (syncCloud) pushTimerStateToServer(payload);
         } catch {}
     }
 
-    function restoreTimerState() {
+    function applyTimerStateObj(st, isFromRemote = false) {
+        if (!st || typeof st.selectedMinutes !== 'number') return;
+        isApplyingRemoteTimer = true;
         try {
-            const raw = localStorage.getItem(TIMER_STORE_KEY);
-            if (!raw) return;
-            const st = JSON.parse(raw);
-            if (!st || typeof st.selectedMinutes !== 'number') return;
-
             selectedMinutes = Math.max(1, Math.min(180, Math.round(st.selectedMinutes)));
             totalSeconds = st.totalSeconds || (selectedMinutes * 60);
+            lastTimerSavedAt = Number(st.savedAt) || lastTimerSavedAt;
             syncDurationPillHighlight(selectedMinutes);
 
             if (st.status === 'running' && st.targetEndTime) {
                 const remain = Math.ceil((st.targetEndTime - Date.now()) / 1000);
                 if (remain > 0) {
+                    // 如果本机已经在跑同一个倒计时，只微调秒数不重复重置
+                    if (isFocusing && Math.abs(activeTargetEndTime - st.targetEndTime) < 2000) {
+                        remainingSeconds = remain;
+                        updateTimerUI();
+                        return;
+                    }
                     remainingSeconds = remain;
                     activeTargetEndTime = st.targetEndTime;
                     startMainTimerLoop();
-                    saveTimerState({ status: 'running', targetEndTime: st.targetEndTime });
                 } else {
                     remainingSeconds = 0;
                     sessionActive = true;
                     isFocusing = false;
                     isPaused = false;
                     updateTimerUI();
-                    saveTimerState({ status: 'idle' });
+                    isApplyingRemoteTimer = false;
+                    saveTimerState({ status: 'idle' }, true);
                     setTimeout(() => {
                         if (typeof completeFocusNaturally === 'function') completeFocusNaturally();
                     }, 550);
@@ -98,10 +118,12 @@
             }
 
             if (st.status === 'paused') {
+                clearInterval(timerInterval);
                 remainingSeconds = Math.max(1, Math.min(totalSeconds, Math.round(st.remainingSeconds || totalSeconds)));
                 sessionActive = true;
                 isFocusing = false;
                 isPaused = true;
+                activeTargetEndTime = 0;
                 currentPauseStart = st.pauseStartTime || Date.now();
 
                 const availSec = typeof getRemainingPauseSeconds === 'function' ? getRemainingPauseSeconds() : 600;
@@ -114,7 +136,8 @@
 
                 if (availSec <= 0) {
                     if (typeof commitCurrentPause === 'function') commitCurrentPause();
-                    saveTimerState({ status: 'idle' });
+                    isApplyingRemoteTimer = false;
+                    saveTimerState({ status: 'idle' }, true);
                     setTimeout(() => {
                         if (typeof handleFocusDecision === 'function') handleFocusDecision('pause_timeout');
                     }, 550);
@@ -128,7 +151,7 @@
                         if (pauseRemainSeconds <= 0) {
                             commitCurrentPause();
                             clearInterval(pauseInterval);
-                            saveTimerState({ status: 'idle' });
+                            saveTimerState({ status: 'idle' }, true);
                             handleFocusDecision('pause_timeout');
                         }
                     }, 1000);
@@ -136,11 +159,66 @@
                 return;
             }
 
+            // idle 空闲态：如果另一端已放弃或完成，这边同步归位停表！
+            clearInterval(timerInterval);
+            clearInterval(pauseInterval);
+            isFocusing = false;
+            isPaused = false;
+            sessionActive = false;
+            activeTargetEndTime = 0;
+            currentPauseStart = null;
             remainingSeconds = totalSeconds;
+            document.getElementById('durationPills')?.classList.remove('locked');
+            document.getElementById('pauseWarningBar')?.classList.remove('show');
+            const startBtn = document.getElementById('startFocusBtn');
+            if (startBtn) startBtn.innerText = '开始专注';
+            const lbl = document.getElementById('timerStatusLabel');
+            if (lbl && isFromRemote) {
+                lbl.innerText = (typeof appConfig !== 'undefined' && appConfig.soloMode)
+                    ? 'SOLO FOCUS · 纯享单人专注'
+                    : 'ONLINE FOCUS · 休闲状态';
+            }
             updateTimerUI();
+            updatePeekBtnUI();
+        } catch (err) {
+            console.warn('应用番茄钟状态失败:', err);
+        } finally {
+            isApplyingRemoteTimer = false;
+        }
+    }
+
+    async function pullTimerStateFromServer() {
+        try {
+            const res = await fetch(`${getApiBase()}/api/timer/state`);
+            if (!res.ok) return;
+            const json = await res.json();
+            const remote = json?.data;
+            if (!remote || typeof remote !== 'object') {
+                if (lastTimerSavedAt > 0) {
+                    const localRaw = localStorage.getItem(TIMER_STORE_KEY);
+                    if (localRaw) pushTimerStateToServer(JSON.parse(localRaw));
+                }
+                return;
+            }
+            const remoteTs = Number(remote.savedAt) || 0;
+            if (remoteTs > lastTimerSavedAt) {
+                localStorage.setItem(TIMER_STORE_KEY, JSON.stringify(remote));
+                applyTimerStateObj(remote, true);
+            }
+        } catch {}
+    }
+
+    function restoreTimerState() {
+        try {
+            const raw = localStorage.getItem(TIMER_STORE_KEY);
+            if (raw) {
+                const st = JSON.parse(raw);
+                applyTimerStateObj(st, false);
+            }
         } catch (err) {
             console.warn('恢复番茄钟状态失败:', err);
         }
+        pullTimerStateFromServer();
     }
 
     function hookTimerFunctions() {
@@ -148,7 +226,7 @@
             const orig = window.setFocusMinutes;
             window.setFocusMinutes = function () {
                 const ret = orig.apply(this, arguments);
-                saveTimerState({ status: 'idle' });
+                saveTimerState({ status: 'idle' }, true);
                 return ret;
             };
         }
@@ -157,8 +235,10 @@
             const orig = window.startMainTimerLoop;
             window.startMainTimerLoop = function () {
                 const ret = orig.apply(this, arguments);
-                activeTargetEndTime = Date.now() + remainingSeconds * 1000;
-                saveTimerState({ status: 'running', targetEndTime: activeTargetEndTime });
+                if (!isApplyingRemoteTimer) {
+                    activeTargetEndTime = Date.now() + remainingSeconds * 1000;
+                    saveTimerState({ status: 'running', targetEndTime: activeTargetEndTime }, true);
+                }
                 return ret;
             };
         }
@@ -168,10 +248,10 @@
             window.toggleFocus = function () {
                 const ret = orig.apply(this, arguments);
                 if (isPaused) {
-                    saveTimerState({ status: 'paused', pauseStartTime: currentPauseStart });
+                    saveTimerState({ status: 'paused', pauseStartTime: currentPauseStart }, true);
                 } else if (isFocusing) {
                     activeTargetEndTime = Date.now() + remainingSeconds * 1000;
-                    saveTimerState({ status: 'running', targetEndTime: activeTargetEndTime });
+                    saveTimerState({ status: 'running', targetEndTime: activeTargetEndTime }, true);
                 }
                 return ret;
             };
@@ -180,7 +260,7 @@
         if (typeof window.completeFocusNaturally === 'function') {
             const orig = window.completeFocusNaturally;
             window.completeFocusNaturally = async function () {
-                saveTimerState({ status: 'idle' });
+                saveTimerState({ status: 'idle' }, true);
                 return orig.apply(this, arguments);
             };
         }
@@ -189,34 +269,39 @@
             const orig = window.handleFocusDecision;
             window.handleFocusDecision = async function (decision) {
                 if (decision === 'abandon' || decision === 'pause_timeout' || decision === 'complete') {
-                    saveTimerState({ status: 'idle' });
+                    saveTimerState({ status: 'idle' }, true);
                 }
                 const ret = await orig.apply(this, arguments);
                 if (decision === 'continue' && isFocusing) {
                     activeTargetEndTime = Date.now() + remainingSeconds * 1000;
-                    saveTimerState({ status: 'running', targetEndTime: activeTargetEndTime });
+                    saveTimerState({ status: 'running', targetEndTime: activeTargetEndTime }, true);
                 }
                 return ret;
             };
         }
 
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && isFocusing && activeTargetEndTime > 0) {
-                const exactRemain = Math.ceil((activeTargetEndTime - Date.now()) / 1000);
-                if (exactRemain <= 0) {
-                    remainingSeconds = 0;
-                    updateTimerUI();
-                    completeFocusNaturally();
-                } else {
-                    remainingSeconds = exactRemain;
-                    updateTimerUI();
+            if (!document.hidden) {
+                if (isFocusing && activeTargetEndTime > 0) {
+                    const exactRemain = Math.ceil((activeTargetEndTime - Date.now()) / 1000);
+                    if (exactRemain <= 0) {
+                        remainingSeconds = 0;
+                        updateTimerUI();
+                        completeFocusNaturally();
+                        return;
+                    } else {
+                        remainingSeconds = exactRemain;
+                        updateTimerUI();
+                    }
                 }
+                pullTimerStateFromServer();
             }
         });
 
-        window.addEventListener('beforeunload', () => saveTimerState());
+        window.addEventListener('focus', () => pullTimerStateFromServer());
+        // 关闭页面只写本地缓存，绝不用旧标签页覆盖云端最新倒计时！
+        window.addEventListener('beforeunload', () => saveTimerState(null, false));
     }
-
     // =========================================================================
     // 2. 🪙 全部精细触发开关（摸鱼 / 切歌 / 偷看批注） + 🌐 Tavily 联网配置
     // =========================================================================

@@ -1,4 +1,4 @@
-// music-pro-routes.js —— 本地音频自由上传入库 + 60秒音乐片段多模态直通分享 & <memo> 听觉记忆回填
+// music-pro-routes.js —— 本地音频自由上传入库 + 60秒音乐片段多模态直通分享 & <memo> 听觉记忆回填 + 硬盘落盘瘦身
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -42,6 +42,8 @@ function stripMetaKeepVoice(rawText) {
         { find: /<memo>[\s\S]*?<\/memo>/gi, replace: '' },
         { find: /<memo>[\s\S]*$/gi, replace: '' },
         { find: /<\/?memo>\s*/gi, replace: '' },
+        { find: /<pet\s*:\s*[^<>]*>/gi, replace: '' },
+        { find: /<play\s*:\s*[^<>]*>/gi, replace: '' },
         { find: /\[(incipere|finire)\]\s*/gi, replace: '' }
     ];
     for (const r of rules) text = text.replace(r.find, r.replace);
@@ -86,20 +88,22 @@ function parseReplySegments(rawText, { charName, splitByDollar, voiceEnabled, cl
 
 module.exports = function registerMusicProRoutes(app, ctx) {
     const {
-        db, musicDb, tts, presets, vault,
+        db, musicDb, tts, presets, vault, memoEngine, mediaStore,
         getSetting, getBoolSetting, getActiveCharKey,
         createAIClient, getModelName, getPersonasBlock, getRoomContextSummary,
         getUnifiedMemoryMessages, buildOrderedMessages, cleanAIOutput,
         extractMemoTag, formatLocalTimestamp, getMemoryEpoch, getMemoryCount
     } = ctx;
 
-    // 1. 静态挂载本地音频目录（自动支持 Range 断点续传与进度条随意拖动！）
+    const persistMedia = (val, prefix) => (mediaStore ? mediaStore.persistMedia(val, prefix) : val);
+
+    // 1. 静态挂载本地音频目录（支持 Range 断点续传与进度条拖动）
     app.use('/music-files', express.static(MUSIC_FILES_DIR, {
         acceptRanges: true,
         maxAge: '7d'
     }));
 
-    // 2. 📁 上传本地 MP3/WAV/OGG/M4A/FLAC 音频入库（零第三方依赖，支持自定义命名，上限 50MB）
+    // 2. 📁 上传本地 MP3/WAV/OGG/M4A/FLAC 音频入库（上限 50MB）
     app.post('/api/music-pro/upload', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
         try {
             const buf = req.body;
@@ -122,12 +126,7 @@ module.exports = function registerMusicProRoutes(app, ctx) {
             console.log(`🎵 本地音乐入库成功: 《${finalTitle}》 -> ${publicUrl} (${(buf.length / 1024 / 1024).toFixed(2)} MB)`);
             res.json({
                 success: true,
-                song: {
-                    id: info.lastInsertRowid,
-                    title: finalTitle,
-                    url: publicUrl,
-                    is_builtin: 0
-                }
+                song: { id: info.lastInsertRowid, title: finalTitle, url: publicUrl, is_builtin: 0 }
             });
         } catch (error) {
             res.status(500).json({ success: false, message: `音频保存失败：${error.message}` });
@@ -152,7 +151,7 @@ module.exports = function registerMusicProRoutes(app, ctx) {
         }
     });
 
-    // 4. 🎧 分享本地音乐截取片段给角色（原生多模态音频直通 + <memo> 听觉记忆回填！）
+    // 4. 🎧 分享本地音乐截取片段给角色（原生多模态音频直通 + 硬盘落盘 + <memo> 听觉记忆回填）
     app.post('/api/music-pro/share-clip', async (req, res) => {
         const {
             trackTitle = '未命名曲目',
@@ -191,6 +190,8 @@ module.exports = function registerMusicProRoutes(app, ctx) {
         const memDb = vault.getMemoryDb(charKey);
         ensureTurnSchema(memDb);
 
+        // 音乐片段落盘成 /uploads/... 短链，防止 2MB WAV Base64 撑爆聊天库！
+        const savedClipUrl = persistMedia(audioData, 'music_clip');
         const storedUserContent = JSON.stringify({
             __mm: 1,
             isMusicClip: true,
@@ -198,7 +199,7 @@ module.exports = function registerMusicProRoutes(app, ctx) {
             clipRange: rangeLabel,
             clipDuration: clipDur,
             text: cleanComment,
-            audioData
+            audioData: savedClipUrl
         });
 
         const userInfo = memDb.prepare(
@@ -224,7 +225,7 @@ module.exports = function registerMusicProRoutes(app, ctx) {
 
         try {
             const openai = createAIClient();
-            const { promptText, userName, charName } = getPersonasBlock();
+            const { promptText, userName, charName } = getPersonasBlock(charKey);
             const splitEnabled = getBoolSetting('chatSplitEnabled', true);
             const voiceEnabled = getBoolSetting('voiceEnabled', false);
 
@@ -287,10 +288,11 @@ module.exports = function registerMusicProRoutes(app, ctx) {
                             speed: getSetting('voiceSpeed', '1.0')
                         });
                         if (synth.audioData) {
+                            const savedVoiceUrl = persistMedia(synth.audioData, 'tts');
                             preparedBubbles.push({
                                 kind: 'voice',
                                 text: seg.text,
-                                content: JSON.stringify({ __mm: 1, text: seg.text, audioData: synth.audioData, isVoiceMsg: true })
+                                content: JSON.stringify({ __mm: 1, text: seg.text, audioData: savedVoiceUrl, isVoiceMsg: true })
                             });
                             continue;
                         }
@@ -325,6 +327,9 @@ module.exports = function registerMusicProRoutes(app, ctx) {
                 const insMem = memDb.prepare('INSERT INTO memory_events (char_key, event_type, role, content, turn_id) VALUES (?, ?, ?, ?, ?)');
                 insMem.run(charKey, 'chat', 'user', enrichedUserMem, turnId);
                 insMem.run(charKey, 'chat', 'assistant', joinedAiMem, turnId);
+                if (memoEngine && typeof memoEngine.onTurnCompleted === 'function') {
+                    memoEngine.onTurnCompleted(charKey);
+                }
             }
 
             console.log(`🎧 音乐片段分享完成: 《${cleanTitle}》(${rangeLabel}) | <memo>: ${extractedMemo || '(无)'}`);

@@ -1,11 +1,12 @@
-// public/fx-pro.js —— 角色跨次元联动(<pet>/<play>) + 便签撕碎粒子 + 小手机信号/呼吸光晕 + 记忆滚动归档手账按钮
+// public/fx-pro.js —— 角色跨次元联动(<pet>/<play>)双端实时真同步 + 便签撕碎粒子 + 小手机信号/呼吸光晕
 (function () {
+    const getApiBase = () => (typeof API_BASE !== 'undefined' ? API_BASE : '');
+
     function injectStyles() {
         if (document.getElementById('fxProStyles')) return;
         const style = document.createElement('style');
         style.id = 'fxProStyles';
         style.textContent = `
-            /* 1. 🎊 便签撕碎碎纸屑粒子 */
             .fx-paper-shard {
                 position: fixed;
                 pointer-events: none;
@@ -14,8 +15,6 @@
                 box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
                 will-change: transform, opacity;
             }
-
-            /* 2. 📱 小手机伪系统信号/电量徽章 + 倾听呼吸光晕 */
             .fx-phone-status {
                 display: inline-flex;
                 align-items: center;
@@ -46,7 +45,6 @@
                 25% { transform: translateX(-3px); }
                 75% { transform: translateX(3px); }
             }
-
             #commDrawer.fx-listening-glow {
                 box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72), 0 0 0 1.8px rgba(56, 189, 248, 0.55), 0 0 28px rgba(56, 189, 248, 0.28) !important;
                 animation: fxBreathRim 1.8s ease-in-out infinite;
@@ -55,51 +53,22 @@
                 0%, 100% { box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72), 0 0 0 1.5px rgba(56, 189, 248, 0.42), 0 0 18px rgba(56, 189, 248, 0.18); }
                 50% { box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72), 0 0 0 2.2px rgba(217, 119, 6, 0.65), 0 0 34px rgba(217, 119, 6, 0.34); }
             }
-
-            /* 3. 📖 记忆手术台归档手账按钮 */
-            .fx-archive-btn {
-                background: rgba(168, 85, 247, 0.18);
-                border: 1px solid rgba(192, 132, 252, 0.48);
-                color: #e9d5ff;
-                padding: 7px 13px;
-                border-radius: 999px;
-                font-size: 12px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: all 0.18s;
-                white-space: nowrap;
-            }
-            .fx-archive-btn:hover:not(:disabled) {
-                background: rgba(168, 85, 247, 0.34);
-                color: #fff;
-            }
-            .fx-archive-btn:disabled { opacity: 0.55; cursor: not-allowed; }
         `;
         document.head.appendChild(style);
     }
 
-    // =========================================================================
-    // 1. 🎊 撕便利贴碎纸屑粒子动效
-    // =========================================================================
     function burstPaperShards(noteEl) {
         if (!noteEl) return;
         const rect = noteEl.getBoundingClientRect();
         if (rect.width < 10 || rect.height < 10) return;
-
         const baseColor = getComputedStyle(noteEl).backgroundColor || '#fef08a';
-        const count = 22;
-        for (let i = 0; i < count; i++) {
+        for (let i = 0; i < 22; i++) {
             const shard = document.createElement('div');
             shard.className = 'fx-paper-shard';
-            const w = 6 + Math.random() * 10;
-            const h = 5 + Math.random() * 9;
-            const startX = rect.left + Math.random() * rect.width;
-            const startY = rect.top + Math.random() * rect.height;
-
-            shard.style.width = `${w}px`;
-            shard.style.height = `${h}px`;
-            shard.style.left = `${startX}px`;
-            shard.style.top = `${startY}px`;
+            shard.style.width = `${6 + Math.random() * 10}px`;
+            shard.style.height = `${5 + Math.random() * 9}px`;
+            shard.style.left = `${rect.left + Math.random() * rect.width}px`;
+            shard.style.top = `${rect.top + Math.random() * rect.height}px`;
             shard.style.background = baseColor;
             shard.style.filter = `brightness(${(0.86 + Math.random() * 0.24).toFixed(2)})`;
             document.body.appendChild(shard);
@@ -108,14 +77,12 @@
             const dy = -25 - Math.random() * 65;
             const fallY = 95 + Math.random() * 110;
             const rot = (Math.random() - 0.5) * 540;
-            const dur = 580 + Math.random() * 340;
-
             shard.animate([
                 { transform: 'translate(0, 0) rotate(0deg) scale(1)', opacity: 1 },
                 { transform: `translate(${dx * 0.55}px, ${dy}px) rotate(${rot * 0.45}deg) scale(1.05)`, opacity: 0.95, offset: 0.32 },
                 { transform: `translate(${dx}px, ${fallY}px) rotate(${rot}deg) scale(0.45)`, opacity: 0 }
             ], {
-                duration: dur,
+                duration: 580 + Math.random() * 340,
                 easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
                 fill: 'forwards'
             }).onfinish = () => shard.remove();
@@ -127,16 +94,11 @@
         const orig = window.tearCurrentNote;
         window.tearCurrentNote = async function () {
             const noteEl = document.getElementById('stickyNote');
-            if (noteEl && noteEl.classList.contains('show')) {
-                burstPaperShards(noteEl);
-            }
+            if (noteEl && noteEl.classList.contains('show')) burstPaperShards(noteEl);
             return orig.apply(this, arguments);
         };
     }
 
-    // =========================================================================
-    // 2. 📱 小手机伪系统信号/电量状态条 + 倾听呼吸光晕
-    // =========================================================================
     let phoneStatusEl = null;
     let batteryLevel = 92;
 
@@ -150,7 +112,6 @@
         phoneStatusEl.innerText = `📶 5G · 🔋${batteryLevel}%`;
         actions.insertBefore(phoneStatusEl, actions.firstChild);
 
-        // 如果浏览器支持真实电量接口就悄悄同步真实电量！
         if (navigator.getBattery) {
             navigator.getBattery().then(bat => {
                 const syncBat = () => {
@@ -182,80 +143,28 @@
         }
     }
 
-    // =========================================================================
-    // 3. 🎭 角色跨次元联动执行器（<pet:...> 隔空逗桌宠 + <play:...> 主动切歌！）
-    // =========================================================================
-    function appendChatNotice(txt) {
-        const box = document.getElementById('imMessagesList');
-        if (!box) return;
-        const pill = document.createElement('div');
-        pill.className = 'chat-sys-pill';
-        pill.innerText = txt;
-        box.appendChild(pill);
-        if (typeof scrollChatToBottom === 'function') scrollChatToBottom();
+    // 🎭 角色跨次元联动执行器（<pet> 逗桌宠 + <play> 主动切歌 · 双端同步，系统小字已由后端持久存库！）
+    let lastSeenActionId = 0;
+    let actionPollerReady = false;
+    const executedActionIds = new Set();
+
+    function executePetActionByAI(action, overrideCharName = '', isFromRemoteSync = false) {
+        const charName = overrideCharName || (typeof appConfig !== 'undefined' && appConfig.charName) || 'TA';
+        if (window.StudyPet && typeof window.StudyPet.aiInteract === 'function') {
+            window.StudyPet.aiInteract(action, charName, isFromRemoteSync);
+        }
+        if (isFromRemoteSync && typeof showCommBanner === 'function') {
+            const tipMap = {
+                feed: '悄悄给你的桌宠空投了一份小零食！',
+                ball: '隔空陪你的桌宠丢起了弹力球！',
+                rage: '隔空戳了戳桌宠，小家伙炸毛抗议了！',
+                happy: '隔空摸了摸桌宠，小家伙原地蹦跶起来了！'
+            };
+            showCommBanner(`🐾 ${charName} 逗了逗你的桌宠`, tipMap[action] || tipMap.happy, false);
+        }
     }
 
-    function executePetActionByAI(action) {
-        const actor = document.querySelector('.pet-actor');
-        if (!actor || actor.classList.contains('hidden')) return;
-        const charName = (typeof appConfig !== 'undefined' && appConfig.charName) || 'TA';
-
-        const spawnQuickFx = (sym) => {
-            const fx = document.createElement('span');
-            fx.className = 'pet-fx';
-            fx.innerText = sym;
-            actor.appendChild(fx);
-            setTimeout(() => fx.remove(), 1200);
-        };
-
-        if (action === 'feed' && window.StudyPet?.feed) {
-            // 触发原生高空抛食物理特效！
-            window.StudyPet.feed();
-            setTimeout(() => {
-                const x = Math.round(window.innerWidth * (0.35 + Math.random() * 0.3));
-                const y = 85;
-                document.dispatchEvent(new PointerEvent('pointerdown', {
-                    clientX: x, clientY: y, button: 0, bubbles: true, cancelable: true
-                }));
-            }, 95);
-            appendChatNotice(`🍖 ${charName} 悄悄给你的桌宠空投了一份小零食！`);
-            return;
-        }
-
-        if (action === 'ball' && window.StudyPet?.playBall) {
-            window.StudyPet.playBall();
-            setTimeout(() => {
-                const x = Math.round(window.innerWidth * (0.3 + Math.random() * 0.4));
-                const y = Math.round(window.innerHeight * 0.35);
-                document.dispatchEvent(new PointerEvent('pointerdown', {
-                    clientX: x, clientY: y, button: 0, bubbles: true, cancelable: true
-                }));
-            }, 95);
-            appendChatNotice(`🎾 ${charName} 隔空陪你的桌宠丢起了弹力球！`);
-            return;
-        }
-
-        if (action === 'rage') {
-            actor.classList.add('raging');
-            spawnQuickFx('💢');
-            window.StudyPet?.say?.(`喂！${charName}怎么也隔空戳我💢`, 3200);
-            setTimeout(() => actor.classList.remove('raging'), 2600);
-            appendChatNotice(`💢 ${charName} 隔空戳了戳桌宠，小家伙炸毛抗议了！`);
-            return;
-        }
-
-        // happy / jump
-        actor.classList.remove('bouncing');
-        void actor.offsetWidth;
-        actor.classList.add('bouncing');
-        spawnQuickFx('❤️');
-        setTimeout(() => spawnQuickFx('✨'), 180);
-        window.StudyPet?.say?.(`${charName}隔空夸我啦开心✨`, 3200);
-        setTimeout(() => actor.classList.remove('bouncing'), 900);
-        appendChatNotice(`🐾 ${charName} 隔空摸了摸桌宠，小家伙原地蹦跶起来了！`);
-    }
-
-    function executePlaySongByAI(query) {
+    function executePlaySongByAI(query, overrideCharName = '', isFromRemoteSync = false) {
         if (!query || typeof playlist === 'undefined' || !playlist.length) return;
         const q = String(query).toLowerCase().trim();
         let idx = playlist.findIndex(s => String(s.title || '').toLowerCase() === q);
@@ -264,23 +173,76 @@
         if (idx === -1) return;
 
         const targetSong = playlist[idx];
-        const charName = (typeof appConfig !== 'undefined' && appConfig.charName) || 'TA';
+        const charName = overrideCharName || (typeof appConfig !== 'undefined' && appConfig.charName) || 'TA';
 
         currentSongIndex = idx;
         if (typeof updateMusicUI === 'function') updateMusicUI();
+
+        const toast = document.getElementById('musicToast');
+        if (toast) toast.innerText = `🎵 ${charName} 悄悄为你点了《${targetSong.title}》`;
+
         if (typeof audioPlayer !== 'undefined') {
             audioPlayer.play().then(() => {
                 document.getElementById('vinylDisc')?.classList.add('playing');
                 const pb = document.getElementById('playPauseBtn');
                 if (pb) pb.innerText = '⏸ 暂停';
-            }).catch(() => {});
+                if (typeof showCommBanner === 'function') {
+                    showCommBanner(`💿 ${charName} 为你点了一首歌`, `正在播放：《${targetSong.title}》`, false);
+                }
+            }).catch(() => {
+                if (typeof showCommBanner === 'function') {
+                    showCommBanner(
+                        `💿 ${charName} 已为你切好歌`,
+                        isFromRemoteSync ? `已同步切至《${targetSong.title}》，轻点留声机播放即可收听～` : `已切至《${targetSong.title}》`,
+                        false
+                    );
+                }
+            });
         }
-        const toast = document.getElementById('musicToast');
-        if (toast) toast.innerText = `🎵 ${charName} 悄悄为你点了《${targetSong.title}》`;
-        appendChatNotice(`💿 ${charName} 主动把留声机切到了《${targetSong.title}》`);
-        if (typeof showCommBanner === 'function') {
-            showCommBanner(`💿 ${charName} 为你点了一首歌`, `正在播放：《${targetSong.title}》`, false);
+    }
+
+    function runActionList(actions, charName = '', isFromRemoteSync = false) {
+        if (!Array.isArray(actions) || !actions.length) return;
+        for (const act of actions) {
+            if (act.type === 'pet') executePetActionByAI(act.action, charName, isFromRemoteSync);
+            else if (act.type === 'play') executePlaySongByAI(act.query, charName, isFromRemoteSync);
         }
+    }
+
+    async function initRoomActionPoller() {
+        try {
+            const res = await fetch(`${getApiBase()}/api/room/actions?init=1`);
+            if (res.ok) {
+                const data = await res.json();
+                lastSeenActionId = Math.max(lastSeenActionId, Number(data?.latestId) || 0);
+            }
+        } catch {}
+        actionPollerReady = true;
+    }
+
+    async function pollRoomActions() {
+        if (!actionPollerReady || document.hidden) return;
+        try {
+            const res = await fetch(`${getApiBase()}/api/room/actions?since=${lastSeenActionId}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data?.success) return;
+            if (typeof data.latestId === 'number' && data.latestId > lastSeenActionId) {
+                lastSeenActionId = data.latestId;
+            }
+            const events = Array.isArray(data.events) ? data.events : [];
+            let hasRemote = false;
+            for (const ev of events) {
+                if (!ev || executedActionIds.has(ev.id)) continue;
+                executedActionIds.add(ev.id);
+                hasRemote = true;
+                runActionList(ev.actions, ev.charName || '', true);
+            }
+            // 同步刷新另一端聊天记录，确保新消息 + 永久系统小字立刻呈现！
+            if (hasRemote && typeof window.loadChatHistory === 'function') {
+                window.loadChatHistory();
+            }
+        } catch {}
     }
 
     function hookChatNetworkAndActions() {
@@ -301,13 +263,12 @@
                         try {
                             const cloned = await res.clone().json();
                             if (Array.isArray(cloned?.roomActions) && cloned.roomActions.length > 0) {
-                                // 稍等片刻配合气泡弹出节奏执行跨次元动作，画面感拉满！
-                                setTimeout(() => {
-                                    for (const act of cloned.roomActions) {
-                                        if (act.type === 'pet') executePetActionByAI(act.action);
-                                        else if (act.type === 'play') executePlaySongByAI(act.query);
-                                    }
-                                }, 450);
+                                const evId = Number(cloned.actionEventId) || 0;
+                                if (evId > 0) {
+                                    executedActionIds.add(evId);
+                                    lastSeenActionId = Math.max(lastSeenActionId, evId);
+                                }
+                                setTimeout(() => runActionList(cloned.roomActions, '', false), 450);
                             }
                         } catch {}
                     }
@@ -320,71 +281,15 @@
         };
     }
 
-    // =========================================================================
-    // 4. 📖 记忆手术台一键「滚动压缩归档为手账」
-    // =========================================================================
-    function getCheckedMemoryIdsFromDom() {
-        const ids = [];
-        document.querySelectorAll('#memItemsList .mem-item-card.checked .mem-time').forEach(el => {
-            const m = String(el.innerText || '').match(/^#(\d+)/);
-            if (m && m[1]) ids.push(parseInt(m[1], 10));
-        });
-        return ids;
-    }
-
-    async function runMemoryArchive() {
-        const btn = document.getElementById('fxArchiveMemBtn');
-        const checkedIds = getCheckedMemoryIdsFromDom();
-        const confirmMsg = checkedIds.length > 0
-            ? `确定将已勾选的 ${checkedIds.length} 条记忆压缩归档为 1 份「阶段核心手账」吗？\n（既保留所有核心事件与梗，又大幅节省上下文 Token！）`
-            : `未勾选具体条目，将自动保留最新 4 条原始对话防断片，并把前面所有历史记忆浓缩为 1 份「阶段核心手账」。\n\n确定开始智能压缩归档吗？`;
-
-        if (!confirm(confirmMsg)) return;
-
-        if (btn) { btn.disabled = true; btn.innerText = '⏳ 正在提炼手账...'; }
-        try {
-            const res = await fetch(`${API_BASE}/api/memory/archive`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(checkedIds.length > 0 ? { ids: checkedIds } : {})
-            });
-            const data = await res.json();
-            if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
-
-            if (window.MemoryUI?.refresh) await window.MemoryUI.refresh();
-            if (typeof showCommBanner === 'function') {
-                showCommBanner(
-                    '📖 记忆手账归档完成',
-                    `已将 ${data.archivedCount} 条碎片记忆浓缩为高密度核心手账！当前总记忆仅剩 ${data.memoryCount} 条～`,
-                    false
-                );
-            }
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            if (btn) { btn.disabled = false; btn.innerText = '📖 压缩归档为手账'; }
-        }
-    }
-
-    function mountArchiveButtonInMemoryModal() {
-        const actions = document.querySelector('#memoryManagerModal .mem-footer-actions');
-        if (!actions || document.getElementById('fxArchiveMemBtn')) return;
-        const btn = document.createElement('button');
-        btn.id = 'fxArchiveMemBtn';
-        btn.type = 'button';
-        btn.className = 'fx-archive-btn';
-        btn.innerText = '📖 压缩归档为手账';
-        btn.title = '把勾选的（或较早的）碎片记忆让 AI 浓缩为 200 字阶段手账，防 OOC 且省 Token';
-        btn.onclick = () => runMemoryArchive();
-
-        const delBtn = document.getElementById('memDeleteSelectedBtn');
-        if (delBtn) actions.insertBefore(btn, delBtn);
-        else actions.appendChild(btn);
-    }
-
     injectStyles();
     hookNoteTearParticles();
     mountPhoneStatusHud();
     hookChatNetworkAndActions();
-    mountArchiveButtonInMemoryModal();
+
+    initRoomActionPoller();
+    setInterval(pollRoomActions, 3500);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) pollRoomActions();
+    });
+    window.addEventListener('focus', () => pollRoomActions());
 })();

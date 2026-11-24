@@ -1,14 +1,17 @@
-// public/chat-pro.js —— 小手机通讯终极版（右下角齿轮小组件 + 全端拖拽 + 四角比例缩放 + 内部等比微缩 + 手机长按调尺寸 + 换肤壁纸 + 右键长按单删）
+// public/chat-pro.js —— 小手机通讯终极版（齿轮小组件 + 全端拖拽缩放 + 换肤壁纸自由拖动缩放 + 本机独立皮肤开关 + 右键长按单删）
 (function () {
-const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
+    const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
+    const LOCAL_SKIN_ONLY_KEY = 'study_room_chat_skin_local_only_v1';
+    const LOCAL_THEME_KEY = 'study_room_chat_local_theme_v1';
+
     const BASE_W = 385;
     const BASE_H = 550;
     const MIN_W = 262;
     const MIN_H = 310;
     const MAX_W_CAP = 760;
     const MAX_H_CAP = 700;
-    const MIN_ASPECT = 0.52; // 最细长比例（宽/高）
-    const MAX_ASPECT = 1.48; // 允许横大于竖多一丢丢的饱满小方盒比例！
+    const MIN_ASPECT = 0.52;
+    const MAX_ASPECT = 1.48;
 
     const DEFAULT_THEME = {
         userBubbleBg: '#0a84ff',
@@ -17,8 +20,13 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         chatBgImage: '',
         chatBgMode: 'cover',
         chatBgBlur: 0,
-        chatBgDim: 0.35
+        chatBgDim: 0.35,
+        chatBgScale: 1,
+        chatBgX: 0,
+        chatBgY: 0
     };
+
+    let localSkinOnly = localStorage.getItem(LOCAL_SKIN_ONLY_KEY) === '1';
 
     let proConfig = {
         chatSplitEnabled: true,
@@ -30,7 +38,8 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
 
     let drawerGeom = { w: BASE_W, h: BASE_H, left: null, top: null };
     let adjustMode = false;
-    let activeGearTab = 'engine'; // 'engine' | 'skin' | 'size'
+    let bgAdjustMode = false;
+    let activeGearTab = 'engine';
 
     let pendingQueue = [];
     let debounceTimer = null;
@@ -53,9 +62,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+    function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
     function calcLuminance(hex) {
         const c = String(hex || '#2c2c2e').replace('#', '');
@@ -66,6 +73,19 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     }
 
+    function loadLocalTheme() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(LOCAL_THEME_KEY) || 'null');
+            return raw && typeof raw === 'object' ? { ...DEFAULT_THEME, ...raw } : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function saveLocalTheme(themeObj) {
+        try { localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify({ ...DEFAULT_THEME, ...(themeObj || {}) })); } catch {}
+    }
+
     function upgradeContextSliderMax() {
         const slider = document.getElementById('cfgContextLimit');
         if (slider) {
@@ -74,13 +94,12 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         }
     }
 
-    // 1. 注入全套样式（含窄屏/手机 !important 覆写 + 等比微缩变量 + 四角调节柄 + 齿轮小组件）
+    // 1. 注入全套样式
     function injectStyles() {
         if (document.getElementById('chatProStyles')) return;
         const style = document.createElement('style');
         style.id = 'chatProStyles';
         style.textContent = `
-            /* 彻底接管窄屏与手机端尺寸定位，实现全端可拖拽可缩放 */
             #commDrawer.comm-drawer.pro-floating {
                 --chat-scale: 1;
                 --chat-user-bubble: #0a84ff;
@@ -103,7 +122,8 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                 user-select: none !important;
                 box-shadow: 0 28px 72px rgba(0, 0, 0, 0.82), 0 0 0 1.5px var(--accent, #d97706) !important;
             }
-            #commDrawer.adjust-mode {
+            #commDrawer.adjust-mode,
+            #commDrawer.bg-adjust-mode {
                 box-shadow: 0 24px 66px rgba(0, 0, 0, 0.78), 0 0 0 2px var(--accent, #d97706) !important;
             }
             #commDrawer > *:not(.chat-bg-layer):not(.chat-resize-handle):not(.chat-gear-popover) {
@@ -111,7 +131,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                 z-index: 1;
             }
 
-            /* 独立背景层 */
+            /* 独立背景层（支持自由拖动 + 缩放！） */
             .chat-bg-layer {
                 position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; display: none;
                 border-radius: inherit;
@@ -124,164 +144,89 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             .chat-bg-layer.mode-blur .chat-bg-backdrop { display: block; }
             .chat-bg-main {
                 position: absolute; inset: 0; width: 100%; height: 100%;
-                object-fit: cover; object-position: center; transition: filter 0.15s ease;
+                object-fit: cover; object-position: center; transform-origin: center center;
+                will-change: transform; transition: filter 0.15s ease;
+                user-select: none; -webkit-user-drag: none;
             }
             .chat-bg-layer.mode-blur .chat-bg-main {
                 object-fit: contain;
                 -webkit-mask-image: radial-gradient(ellipse 88% 86% at 50% 50%, #000 66%, transparent 100%);
                 mask-image: radial-gradient(ellipse 88% 86% at 50% 50%, #000 66%, transparent 100%);
             }
-            .chat-bg-overlay { position: absolute; inset: 0; background: rgba(15, 14, 13, 0.35); }
+            .chat-bg-overlay { position: absolute; inset: 0; background: rgba(15, 14, 13, 0.35); pointer-events: none; }
             #commDrawer.has-chat-bg .im-header { background: rgba(24, 24, 28, 0.72) !important; backdrop-filter: blur(14px); }
             #commDrawer.has-chat-bg .im-input-bar { background: rgba(24, 24, 28, 0.76) !important; backdrop-filter: blur(14px); }
 
-            /* 顶栏极简瘦身 + 等比微缩 + 拖拽触控不冲突 */
+            /* ✋ 聊天背景拖动缩放调节态：消息轻透明穿透，直接拖图/双指/滚轮缩放！ */
+            #commDrawer.bg-adjust-mode .chat-bg-layer {
+                pointer-events: auto !important;
+                cursor: grab !important;
+                touch-action: none !important;
+                z-index: 3 !important;
+            }
+            #commDrawer.bg-adjust-mode .chat-bg-layer:active { cursor: grabbing !important; }
+            #commDrawer.bg-adjust-mode .im-header { z-index: 5 !important; }
+            #commDrawer.bg-adjust-mode .im-messages {
+                opacity: 0.24 !important;
+                pointer-events: none !important;
+                transition: opacity 0.2s ease;
+            }
+            #commDrawer.bg-adjust-mode .im-input-bar { opacity: 0.35 !important; pointer-events: none !important; }
+
             #commDrawer .im-header {
-                cursor: grab;
-                user-select: none;
-                touch-action: none;
+                cursor: grab; user-select: none; touch-action: none;
                 padding: calc(12px * var(--chat-scale)) calc(14px * var(--chat-scale)) !important;
                 gap: 8px;
             }
             #commDrawer.dragging .im-header { cursor: grabbing; }
             #commDrawer .im-contact { gap: calc(9px * var(--chat-scale)); min-width: 0; flex: 1; }
             #commDrawer .im-contact > div:last-child { min-width: 0; }
-            #commDrawer .im-avatar {
-                width: calc(36px * var(--chat-scale));
-                height: calc(36px * var(--chat-scale));
-                font-size: calc(14px * var(--chat-scale));
-            }
-            #commDrawer .im-name {
-                font-size: calc(14px * var(--chat-scale));
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            }
-            #commDrawer .im-sub {
-                font-size: calc(11px * var(--chat-scale));
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            }
-            /* 把原顶栏垃圾桶隐去，已收入右下角齿轮小组件 */
+            #commDrawer .im-avatar { width: calc(36px * var(--chat-scale)); height: calc(36px * var(--chat-scale)); font-size: calc(14px * var(--chat-scale)); }
+            #commDrawer .im-name { font-size: calc(14px * var(--chat-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            #commDrawer .im-sub { font-size: calc(11px * var(--chat-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             #commDrawer .im-actions button[onclick*="openClearChatModal"] { display: none !important; }
-            .chat-adjust-done-btn {
+            .chat-adjust-done-btn,
+            .chat-bg-done-btn {
                 display: none;
                 background: var(--accent, #d97706);
-                color: #fff;
-                border: none;
-                padding: 3px 9px;
-                border-radius: 999px;
-                font-size: 11px;
-                font-weight: 600;
-                cursor: pointer;
-                white-space: nowrap;
+                color: #fff; border: none; padding: 3px 9px; border-radius: 999px;
+                font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;
             }
             #commDrawer.adjust-mode .chat-adjust-done-btn { display: inline-flex; align-items: center; }
+            #commDrawer.bg-adjust-mode .chat-bg-done-btn { display: inline-flex; align-items: center; }
 
-            /* 气泡、头像、字体、语音条随 --chat-scale 等比微缩（最大=1.0即当前大小） */
-            #commDrawer .im-messages {
-                padding: calc(14px * var(--chat-scale));
-                gap: calc(11px * var(--chat-scale));
-            }
+            #commDrawer .im-messages { padding: calc(14px * var(--chat-scale)); gap: calc(11px * var(--chat-scale)); }
             #commDrawer .im-bubble-row { gap: calc(7px * var(--chat-scale)); }
-            #commDrawer .bubble-avatar {
-                width: calc(28px * var(--chat-scale));
-                height: calc(28px * var(--chat-scale));
-                font-size: calc(11px * var(--chat-scale));
-            }
-            #commDrawer .im-bubble {
-                max-width: 78%;
-                padding: calc(9px * var(--chat-scale)) calc(13.5px * var(--chat-scale));
-                font-size: calc(14px * var(--chat-scale));
-                line-height: 1.48;
-            }
+            #commDrawer .bubble-avatar { width: calc(28px * var(--chat-scale)); height: calc(28px * var(--chat-scale)); font-size: calc(11px * var(--chat-scale)); }
+            #commDrawer .im-bubble { max-width: 78%; padding: calc(9px * var(--chat-scale)) calc(13.5px * var(--chat-scale)); font-size: calc(14px * var(--chat-scale)); line-height: 1.48; }
             #commDrawer .im-bubble-row.user .im-bubble {
-                background: var(--chat-user-bubble) !important;
-                color: var(--chat-user-text) !important;
+                background: var(--chat-user-bubble) !important; color: var(--chat-user-text) !important;
                 border-radius: calc(17px * var(--chat-scale)) calc(17px * var(--chat-scale)) 4px calc(17px * var(--chat-scale));
             }
             #commDrawer .im-bubble-row.assistant .im-bubble {
-                background: var(--chat-ai-bubble) !important;
-                color: var(--chat-ai-text) !important;
+                background: var(--chat-ai-bubble) !important; color: var(--chat-ai-text) !important;
                 border-radius: calc(17px * var(--chat-scale)) calc(17px * var(--chat-scale)) calc(17px * var(--chat-scale)) 4px;
             }
             #commDrawer .im-bubble-audio { width: min(205px, 100%); max-width: 100%; }
             #commDrawer .voice-msg-card { min-width: calc(150px * var(--chat-scale)); gap: calc(5px * var(--chat-scale)); }
-            #commDrawer .voice-play-pill {
-                padding: calc(5.5px * var(--chat-scale)) calc(10px * var(--chat-scale));
-                font-size: calc(12px * var(--chat-scale));
-                gap: calc(6px * var(--chat-scale));
-            }
-            #commDrawer .voice-trans-btn {
-                font-size: calc(10.5px * var(--chat-scale));
-                padding: calc(4.5px * var(--chat-scale)) calc(7px * var(--chat-scale));
-            }
+            #commDrawer .voice-play-pill { padding: calc(5.5px * var(--chat-scale)) calc(10px * var(--chat-scale)); font-size: calc(12px * var(--chat-scale)); gap: calc(6px * var(--chat-scale)); }
+            #commDrawer .voice-trans-btn { font-size: calc(10.5px * var(--chat-scale)); padding: calc(4.5px * var(--chat-scale)) calc(7px * var(--chat-scale)); }
             #commDrawer .voice-transcript { font-size: calc(12.5px * var(--chat-scale)); }
-            #commDrawer.ai-bubble-light .voice-play-pill {
-                background: rgba(0, 0, 0, 0.08); border-color: rgba(0, 0, 0, 0.16); color: #1c1917;
-            }
-            #commDrawer.ai-bubble-light .voice-trans-btn {
-                background: rgba(0, 0, 0, 0.08); border-color: rgba(0, 0, 0, 0.16); color: #292524;
-            }
-            #commDrawer.ai-bubble-light .voice-transcript {
-                color: #1c1917; border-top-color: rgba(0, 0, 0, 0.18);
-            }
+            #commDrawer.ai-bubble-light .voice-play-pill { background: rgba(0, 0, 0, 0.08); border-color: rgba(0, 0, 0, 0.16); color: #1c1917; }
+            #commDrawer.ai-bubble-light .voice-trans-btn { background: rgba(0, 0, 0, 0.08); border-color: rgba(0, 0, 0, 0.16); color: #292524; }
+            #commDrawer.ai-bubble-light .voice-transcript { color: #1c1917; border-top-color: rgba(0, 0, 0, 0.18); }
 
-            /* 底部输入栏等比微缩 */
-            #commDrawer .im-input-bar {
-                padding: calc(9px * var(--chat-scale)) calc(10px * var(--chat-scale));
-                gap: calc(5.5px * var(--chat-scale));
-            }
-            #commDrawer .im-tool-btn {
-                width: calc(32px * var(--chat-scale));
-                height: calc(32px * var(--chat-scale));
-                font-size: calc(14px * var(--chat-scale));
-            }
-            #commDrawer .im-send-btn {
-                width: calc(34px * var(--chat-scale));
-                height: calc(34px * var(--chat-scale));
-                font-size: calc(15px * var(--chat-scale));
-            }
-            #commDrawer .im-input {
-                padding: calc(7.5px * var(--chat-scale)) calc(12px * var(--chat-scale));
-                font-size: calc(13.5px * var(--chat-scale));
-            }
-            .im-tool-btn.gear-active {
-                background: var(--accent, #d97706) !important;
-                border-color: var(--accent, #d97706) !important;
-                color: #fff !important;
-                transform: rotate(35deg);
-            }
+            #commDrawer .im-input-bar { padding: calc(9px * var(--chat-scale)) calc(10px * var(--chat-scale)); gap: calc(5.5px * var(--chat-scale)); }
+            #commDrawer .im-tool-btn { width: calc(32px * var(--chat-scale)); height: calc(32px * var(--chat-scale)); font-size: calc(14px * var(--chat-scale)); }
+            #commDrawer .im-send-btn { width: calc(34px * var(--chat-scale)); height: calc(34px * var(--chat-scale)); font-size: calc(15px * var(--chat-scale)); }
+            #commDrawer .im-input { padding: calc(7.5px * var(--chat-scale)) calc(12px * var(--chat-scale)); font-size: calc(13.5px * var(--chat-scale)); }
+            .im-tool-btn.gear-active { background: var(--accent, #d97706) !important; border-color: var(--accent, #d97706) !important; color: #fff !important; transform: rotate(35deg); }
 
-            /* 四个角拖拽调节手柄 */
-            .chat-resize-handle {
-                position: absolute;
-                width: 22px;
-                height: 22px;
-                z-index: 35;
-                touch-action: none;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .chat-resize-handle::after {
-                content: '';
-                width: 9px;
-                height: 9px;
-                border: 2px solid transparent;
-                border-radius: 2px;
-                transition: border-color 0.18s, transform 0.18s;
-            }
-            .chat-resize-handle:hover::after {
-                border-color: rgba(254, 243, 199, 0.7);
-            }
-            #commDrawer.adjust-mode .chat-resize-handle {
-                width: 30px;
-                height: 30px;
-            }
-            #commDrawer.adjust-mode .chat-resize-handle::after {
-                width: 12px;
-                height: 12px;
-                border-color: var(--accent, #d97706);
-                box-shadow: 0 0 10px rgba(217, 119, 6, 0.65);
-            }
+            .chat-resize-handle { position: absolute; width: 22px; height: 22px; z-index: 35; touch-action: none; display: flex; align-items: center; justify-content: center; }
+            .chat-resize-handle::after { content: ''; width: 9px; height: 9px; border: 2px solid transparent; border-radius: 2px; transition: border-color 0.18s, transform 0.18s; }
+            .chat-resize-handle:hover::after { border-color: rgba(254, 243, 199, 0.7); }
+            #commDrawer.adjust-mode .chat-resize-handle { width: 30px; height: 30px; }
+            #commDrawer.adjust-mode .chat-resize-handle::after { width: 12px; height: 12px; border-color: var(--accent, #d97706); box-shadow: 0 0 10px rgba(217, 119, 6, 0.65); }
             .chat-resize-handle.nw { top: 0; left: 0; cursor: nwse-resize; }
             .chat-resize-handle.nw::after { border-right: none; border-bottom: none; border-top-left-radius: 6px; transform: translate(-2px, -2px); }
             .chat-resize-handle.ne { top: 0; right: 0; cursor: nesw-resize; }
@@ -291,136 +236,53 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             .chat-resize-handle.se { bottom: 0; right: 0; cursor: nwse-resize; }
             .chat-resize-handle.se::after { border-left: none; border-top: none; border-bottom-right-radius: 6px; transform: translate(2px, 2px); }
 
-            /* ⚙️ 右下角悬浮工具小组件 */
             .chat-gear-popover {
-                position: absolute;
-                right: 10px;
-                bottom: calc(52px * var(--chat-scale));
-                width: min(292px, calc(100% - 20px));
-                max-height: calc(100% - 108px);
-                overflow-y: auto;
-                z-index: 28;
-                background: rgba(26, 25, 29, 0.96);
-                backdrop-filter: blur(22px);
-                border: 1px solid rgba(255, 255, 255, 0.16);
-                border-radius: 16px;
-                padding: 11px;
-                box-shadow: 0 18px 46px rgba(0, 0, 0, 0.72);
-                display: none;
-                flex-direction: column;
-                gap: 9px;
-                color: #f5f5f4;
-                font-size: 12px;
-                transform-origin: bottom right;
+                position: absolute; right: 10px; bottom: calc(52px * var(--chat-scale));
+                width: min(302px, calc(100% - 20px)); max-height: calc(100% - 108px);
+                overflow-y: auto; z-index: 28; background: rgba(26, 25, 29, 0.96); backdrop-filter: blur(22px);
+                border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 16px; padding: 11px;
+                box-shadow: 0 18px 46px rgba(0, 0, 0, 0.72); display: none; flex-direction: column;
+                gap: 9px; color: #f5f5f4; font-size: 12px; transform-origin: bottom right;
                 animation: gearPop 0.18s cubic-bezier(0.22, 1, 0.36, 1);
             }
             .chat-gear-popover.open { display: flex; }
-            @keyframes gearPop {
-                from { opacity: 0; transform: translateY(8px) scale(0.95); }
-                to { opacity: 1; transform: translateY(0) scale(1); }
-            }
-            .gear-quick-grid {
-                display: grid;
-                grid-template-columns: repeat(4, 1fr);
-                gap: 6px;
-            }
+            @keyframes gearPop { from { opacity: 0; transform: translateY(8px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+            .gear-quick-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
             .gear-tile-btn {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                gap: 3px;
-                padding: 8px 4px;
-                border-radius: 11px;
-                background: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: #e7e5e4;
-                cursor: pointer;
-                font-size: 11px;
-                transition: all 0.16s;
+                display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+                padding: 8px 4px; border-radius: 11px; background: rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.1); color: #e7e5e4; cursor: pointer; font-size: 11px; transition: all 0.16s;
             }
             .gear-tile-btn span:first-child { font-size: 15px; line-height: 1; }
             .gear-tile-btn:hover { background: rgba(255, 255, 255, 0.14); border-color: var(--accent, #d97706); color: #fef3c7; }
             .gear-tile-btn.active { background: rgba(217, 119, 6, 0.25); border-color: var(--accent, #d97706); color: #fde68a; }
             .gear-tile-btn.danger:hover { background: rgba(220, 38, 38, 0.22); border-color: #ef4444; color: #fecaca; }
-            .gear-tab-bar {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 4px;
-                background: rgba(0, 0, 0, 0.28);
-                padding: 3px;
-                border-radius: 10px;
-                border: 1px solid rgba(255, 255, 255, 0.07);
-            }
-            .gear-tab-btn {
-                background: transparent;
-                border: none;
-                color: #a8a29e;
-                padding: 5px 4px;
-                border-radius: 7px;
-                font-size: 11.5px;
-                cursor: pointer;
-                transition: all 0.16s;
-                font-weight: 500;
-            }
-            .gear-tab-btn.active {
-                background: rgba(217, 119, 6, 0.26);
-                color: #fef3c7;
-            }
+            .gear-tab-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: rgba(0, 0, 0, 0.28); padding: 3px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.07); }
+            .gear-tab-btn { background: transparent; border: none; color: #a8a29e; padding: 5px 4px; border-radius: 7px; font-size: 11.5px; cursor: pointer; transition: all 0.16s; font-weight: 500; }
+            .gear-tab-btn.active { background: rgba(217, 119, 6, 0.26); color: #fef3c7; }
             .gear-tab-pane { display: none; flex-direction: column; gap: 8px; }
             .gear-tab-pane.active { display: flex; }
 
-            .chat-pro-row {
-                display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
-            }
-            .chat-pro-row label {
-                display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: #e7e5e4; font-size: 12px;
-            }
-            .chat-pro-row input[type="checkbox"] {
-                width: 15px; height: 15px; accent-color: var(--accent, #d97706); cursor: pointer;
-            }
-            .chat-pro-sec-input {
-                width: 48px; padding: 3px 5px; border-radius: 7px; border: 1px solid #44403c;
-                background: #161514; color: #fef3c7; font-size: 12px; text-align: center;
-            }
+            .chat-pro-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; }
+            .chat-pro-row label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: #e7e5e4; font-size: 12px; }
+            .chat-pro-row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent, #d97706); cursor: pointer; }
+            .chat-pro-sec-input { width: 48px; padding: 3px 5px; border-radius: 7px; border: 1px solid #44403c; background: #161514; color: #fef3c7; font-size: 12px; text-align: center; }
             .chat-skin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-            .chat-skin-color-item {
-                background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.09);
-                border-radius: 9px; padding: 5px 6px; display: flex; flex-direction: column; gap: 3px;
-                font-size: 10.5px; color: #d6d3d1;
-            }
-            .chat-skin-color-item input[type="color"] {
-                width: 100%; height: 24px; border: none; background: transparent; cursor: pointer; padding: 0;
-            }
-            .chat-skin-select {
-                width: 100%; padding: 6px 8px; border-radius: 8px; background: #141416;
-                border: 1px solid #3f3b37; color: #f5f5f4; font-size: 11.5px;
-            }
+            .chat-skin-color-item { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 9px; padding: 5px 6px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #d6d3d1; }
+            .chat-skin-color-item input[type="color"] { width: 100%; height: 24px; border: none; background: transparent; cursor: pointer; padding: 0; }
+            .chat-skin-select { width: 100%; padding: 6px 8px; border-radius: 8px; background: #141416; border: 1px solid #3f3b37; color: #f5f5f4; font-size: 11.5px; }
             .chat-skin-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #a8a29e; }
             .chat-skin-sliders input[type="range"] { width: 100%; accent-color: var(--accent, #d97706); }
             .chat-size-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
-            .chat-pro-cmd-hint {
-                font-size: 11px; color: #a8a29e; background: rgba(255, 255, 255, 0.04);
-                border: 1px dashed rgba(255, 255, 255, 0.12); border-radius: 8px; padding: 6px 8px; line-height: 1.5;
-            }
-            .chat-pro-cmd-hint code {
-                background: rgba(217, 119, 6, 0.22); color: #fde68a; padding: 0 4px; border-radius: 4px;
-                font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px;
-            }
+            .chat-pro-cmd-hint { font-size: 11px; color: #a8a29e; background: rgba(255, 255, 255, 0.04); border: 1px dashed rgba(255, 255, 255, 0.12); border-radius: 8px; padding: 6px 8px; line-height: 1.5; }
+            .chat-pro-cmd-hint code { background: rgba(217, 119, 6, 0.22); color: #fde68a; padding: 0 4px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; }
 
-            /* 防抖条 / 多选条 / 队列态 / 右键菜单 / 撤回确认 */
-            .chat-debounce-bar, .chat-multi-bar {
-                display: none; align-items: center; justify-content: space-between; gap: 6px;
-                padding: 6px 10px; font-size: 11px;
-            }
+            .chat-debounce-bar, .chat-multi-bar { display: none; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 10px; font-size: 11px; }
             .chat-debounce-bar { background: rgba(217, 119, 6, 0.20); border-top: 1px solid rgba(217, 119, 6, 0.42); color: #fde68a; }
             .chat-multi-bar { background: rgba(220, 38, 38, 0.18); border-top: 1px solid rgba(239, 68, 68, 0.45); color: #fecaca; }
             .chat-debounce-bar.show, .chat-multi-bar.show { display: flex; }
             .chat-debounce-actions { display: flex; gap: 4px; flex-shrink: 0; }
-            .chat-debounce-btn {
-                background: rgba(255, 255, 255, 0.11); border: 1px solid rgba(255, 255, 255, 0.17);
-                color: #fff; padding: 3px 8px; border-radius: 999px; font-size: 11px; cursor: pointer;
-            }
+            .chat-debounce-btn { background: rgba(255, 255, 255, 0.11); border: 1px solid rgba(255, 255, 255, 0.17); color: #fff; padding: 3px 8px; border-radius: 999px; font-size: 11px; cursor: pointer; }
             .chat-debounce-btn:hover { background: rgba(255, 255, 255, 0.22); }
             .chat-debounce-btn.primary { background: var(--accent, #d97706); border-color: var(--accent, #d97706); font-weight: 600; }
             .chat-debounce-btn.danger { background: #dc2626; border-color: #ef4444; font-weight: 600; }
@@ -429,38 +291,18 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             .im-bubble-row.multi-selectable { cursor: pointer; padding: 3px 5px; border-radius: 12px; }
             .im-bubble-row.multi-selectable:hover { background: rgba(255, 255, 255, 0.06); }
             .im-bubble-row.multi-selected { background: rgba(239, 68, 68, 0.20) !important; box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.55); }
-            .bubble-check-dot {
-                display: none; width: 17px; height: 17px; border-radius: 50%;
-                border: 1.5px solid rgba(255, 255, 255, 0.45); align-items: center; justify-content: center;
-                font-size: 10.5px; flex-shrink: 0; align-self: center; color: #fff;
-            }
+            .bubble-check-dot { display: none; width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.45); align-items: center; justify-content: center; font-size: 10.5px; flex-shrink: 0; align-self: center; color: #fff; }
             .im-bubble-row.multi-selectable .bubble-check-dot { display: inline-flex; }
             .im-bubble-row.multi-selected .bubble-check-dot { background: #ef4444; border-color: #ef4444; }
-            .chat-sys-pill {
-                align-self: center; font-size: calc(11px * var(--chat-scale)); color: #e7e5e4;
-                background: rgba(24, 24, 28, 0.72); backdrop-filter: blur(8px);
-                border: 1px solid rgba(255, 255, 255, 0.12); padding: 3px 10px; border-radius: 999px; margin: 2px 0;
-            }
-            .chat-bubble-ctx-menu {
-                position: fixed; z-index: 320; min-width: 168px;
-                background: rgba(28, 27, 30, 0.96); backdrop-filter: blur(18px);
-                border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 13px; padding: 5px;
-                box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65); display: none; flex-direction: column; gap: 2px;
-            }
+            .chat-sys-pill { align-self: center; font-size: calc(11px * var(--chat-scale)); color: #e7e5e4; background: rgba(24, 24, 28, 0.72); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.12); padding: 3px 10px; border-radius: 999px; margin: 2px 0; }
+            .chat-bubble-ctx-menu { position: fixed; z-index: 320; min-width: 168px; background: rgba(28, 27, 30, 0.96); backdrop-filter: blur(18px); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 13px; padding: 5px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65); display: none; flex-direction: column; gap: 2px; }
             .chat-bubble-ctx-menu.show { display: flex; }
-            .chat-ctx-item {
-                background: transparent; border: none; color: #f5f5f4; text-align: left;
-                padding: 8px 11px; border-radius: 8px; font-size: 12.5px; cursor: pointer; white-space: nowrap;
-            }
+            .chat-ctx-item { background: transparent; border: none; color: #f5f5f4; text-align: left; padding: 8px 11px; border-radius: 8px; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
             .chat-ctx-item:hover { background: rgba(255, 255, 255, 0.12); }
             .chat-ctx-item.danger { color: #fca5a5; }
             .chat-ctx-item.danger:hover { background: rgba(220, 38, 38, 0.25); color: #fff; }
             .undo-round-pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
-            .undo-preview-box {
-                background: #161514; border: 1px solid #33302d; border-radius: 10px; padding: 10px 12px;
-                max-height: 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
-                margin-bottom: 14px; font-size: 12px;
-            }
+            .undo-preview-box { background: #161514; border: 1px solid #33302d; border-radius: 10px; padding: 10px 12px; max-height: 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; font-size: 12px; }
             .undo-preview-item { display: flex; gap: 6px; align-items: baseline; line-height: 1.45; color: #e7e5e4; }
             .undo-role-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; flex-shrink: 0; }
             .undo-role-tag.u { background: rgba(10, 132, 255, 0.22); color: #93c5fd; }
@@ -469,7 +311,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         document.head.appendChild(style);
     }
 
-    // 2. 窗口几何边界计算 + 比例锁 + 内部等比缩放（max = 1.0）
+    // 2. 窗口几何边界计算
     function getViewportBounds() {
         const vw = window.innerWidth;
         const vh = window.innerHeight;
@@ -530,7 +372,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             drawer.style.setProperty('--drawer-bottom', `${pad}px`);
         }
 
-        // 内部元素随窗口缩小等比微缩，但上限严格锁定 1.0（最大就现在这么大！）
         const rawScale = Math.min(w / BASE_W, h / (BASE_H * 0.94));
         const clampedScale = Math.max(0.80, Math.min(1.0, rawScale));
         drawer.style.setProperty('--chat-scale', clampedScale.toFixed(3));
@@ -548,7 +389,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         const { vw, vh, maxW, maxH } = getViewportBounds();
         if (vw <= 780) {
             const fullW = maxW;
-            // 窄屏平板/半屏电脑：左右拉满、横略大于竖；竖屏手机：左右拉满、高度占 66% 顺手打字
             const targetH = vw >= 500
                 ? Math.min(maxH, Math.round(fullW / 1.18), Math.round(vh * 0.72))
                 : Math.min(maxH, Math.round(vh * 0.66));
@@ -593,10 +433,40 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
 
     function setAdjustMode(enabled) {
         adjustMode = Boolean(enabled);
+        if (adjustMode && bgAdjustMode) setBgAdjustMode(false);
         const drawer = document.getElementById('commDrawer');
         drawer?.classList.toggle('adjust-mode', adjustMode);
-        const tile = document.getElementById('gearAdjustTile');
-        tile?.classList.toggle('active', adjustMode);
+        document.getElementById('gearAdjustTile')?.classList.toggle('active', adjustMode);
+    }
+
+    function setBgAdjustMode(enabled) {
+        bgAdjustMode = Boolean(enabled);
+        if (bgAdjustMode && adjustMode) setAdjustMode(false);
+        const drawer = document.getElementById('commDrawer');
+        drawer?.classList.toggle('bg-adjust-mode', bgAdjustMode);
+        const btn = document.getElementById('skinBgAdjustBtn');
+        if (btn) btn.innerText = bgAdjustMode ? '✓ 锁背景' : '✋ 拖背景';
+        if (bgAdjustMode) {
+            closeGearPopover();
+            appendSysPill('✋ 背景调节模式：直接拖动图片位置、滚轮/双指缩放，调好点右上角「✓ 锁背景」～');
+        } else {
+            saveSkin();
+        }
+    }
+
+    function toggleBgAdjustMode() {
+        if (!proConfig.chatTheme?.chatBgImage) {
+            appendSysPill('🖼️ 请先点「📂 选图」传一张聊天背景再拖动调节哦～');
+            return;
+        }
+        setBgAdjustMode(!bgAdjustMode);
+    }
+
+    function resetSkinBgTransform() {
+        proConfig.chatTheme = { ...proConfig.chatTheme, chatBgScale: 1, chatBgX: 0, chatBgY: 0 };
+        syncSettingsUI();
+        saveSkin();
+        appendSysPill('📌 聊天背景位置与缩放已归位');
     }
 
     function toggleAdjustModeFromWidget() {
@@ -608,16 +478,14 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         }
     }
 
-    // 3. 绑定全端顶栏拖拽（含手机长按 420ms 呼出四角调节）+ 四角缩放手柄
+    // 3. 绑定全端顶栏拖拽 + 四角缩放 + 背景层自由拖放缩放
     function initDragAndResize() {
         const drawer = document.getElementById('commDrawer');
         const header = drawer?.querySelector('.im-header');
         if (!drawer || !header || drawer.dataset.dragResizeBound) return;
         drawer.dataset.dragResizeBound = '1';
 
-        // 3.1 顶栏拖拽 + 双击归位 + 手机长按开启四角调节
-        let dragging = false;
-        let movedEnough = false;
+        let dragging = false, movedEnough = false;
         let startX = 0, startY = 0, startLeft = 0, startTop = 0;
         let headerHoldTimer = null;
 
@@ -631,12 +499,9 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             if (e.button !== 0 && e.pointerType === 'mouse') return;
             if (e.target.closest('button')) return;
             const rect = drawer.getBoundingClientRect();
-            dragging = true;
-            movedEnough = false;
-            startX = e.clientX;
-            startY = e.clientY;
-            startLeft = rect.left;
-            startTop = rect.top;
+            dragging = true; movedEnough = false;
+            startX = e.clientX; startY = e.clientY;
+            startLeft = rect.left; startTop = rect.top;
 
             clearTimeout(headerHoldTimer);
             headerHoldTimer = setTimeout(() => {
@@ -646,26 +511,19 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                     appendSysPill(adjustMode ? '📐 已开启四角缩放模式，拖动任意发光拐角即可改大小' : '✅ 已锁定聊天框尺寸');
                 }
             }, 420);
-
             try { header.setPointerCapture(e.pointerId); } catch {}
         });
 
         header.addEventListener('pointermove', (e) => {
             if (!dragging) return;
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
+            const dx = e.clientX - startX, dy = e.clientY - startY;
             if (!movedEnough && Math.hypot(dx, dy) > 6) {
                 movedEnough = true;
                 clearTimeout(headerHoldTimer);
                 drawer.classList.add('dragging');
             }
             if (!movedEnough) return;
-            applyDrawerGeometry({
-                w: drawerGeom.w,
-                h: drawerGeom.h,
-                left: startLeft + dx,
-                top: startTop + dy
-            }, false);
+            applyDrawerGeometry({ w: drawerGeom.w, h: drawerGeom.h, left: startLeft + dx, top: startTop + dy }, false);
         });
 
         const finishHeaderDrag = () => {
@@ -678,7 +536,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         header.addEventListener('pointerup', finishHeaderDrag);
         header.addEventListener('pointercancel', finishHeaderDrag);
 
-        // 3.2 四个角自由缩放（严守尺寸与形状长宽比界限！）
         const corners = ['nw', 'ne', 'sw', 'se'];
         for (const corner of corners) {
             const handle = document.createElement('div');
@@ -690,30 +547,23 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
 
             handle.addEventListener('pointerdown', (e) => {
                 if (e.button !== 0 && e.pointerType === 'mouse') return;
-                e.preventDefault();
-                e.stopPropagation();
+                e.preventDefault(); e.stopPropagation();
                 const rect = drawer.getBoundingClientRect();
                 resizing = true;
-                rStartX = e.clientX;
-                rStartY = e.clientY;
-                rStartW = rect.width;
-                rStartH = rect.height;
-                rStartL = rect.left;
-                rStartT = rect.top;
-                rAnchorR = rect.left + rect.width;
-                rAnchorB = rect.top + rect.height;
+                rStartX = e.clientX; rStartY = e.clientY;
+                rStartW = rect.width; rStartH = rect.height;
+                rStartL = rect.left; rStartT = rect.top;
+                rAnchorR = rect.left + rect.width; rAnchorB = rect.top + rect.height;
                 drawer.classList.add('resizing');
                 try { handle.setPointerCapture(e.pointerId); } catch {}
             });
 
             handle.addEventListener('pointermove', (e) => {
                 if (!resizing) return;
-                const dx = e.clientX - rStartX;
-                const dy = e.clientY - rStartY;
+                const dx = e.clientX - rStartX, dy = e.clientY - rStartY;
                 const rawW = corner.includes('e') ? rStartW + dx : rStartW - dx;
                 const rawH = corner.includes('s') ? rStartH + dy : rStartH - dy;
                 const { w, h } = constrainSize(rawW, rawH);
-
                 const newLeft = corner.includes('w') ? (rAnchorR - w) : rStartL;
                 const newTop = corner.includes('n') ? (rAnchorB - h) : rStartT;
                 applyDrawerGeometry({ w, h, left: newLeft, top: newTop }, false);
@@ -727,7 +577,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             };
             handle.addEventListener('pointerup', finishResize);
             handle.addEventListener('pointercancel', finishResize);
-
             drawer.appendChild(handle);
         }
 
@@ -735,7 +584,67 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         restoreDrawerGeometry();
     }
 
-    // 4. 换肤应用
+    function bindChatBgGestures(bgLayer) {
+        if (!bgLayer || bgLayer.dataset.bgGestureBound) return;
+        bgLayer.dataset.bgGestureBound = '1';
+
+        let dragging = false, lx = 0, ly = 0;
+        let pinchDist = 0, pinchStartScale = 1;
+
+        bgLayer.addEventListener('pointerdown', (e) => {
+            if (!bgAdjustMode || !proConfig.chatTheme?.chatBgImage) return;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            e.preventDefault();
+            dragging = true; lx = e.clientX; ly = e.clientY;
+            try { bgLayer.setPointerCapture(e.pointerId); } catch {}
+        });
+
+        bgLayer.addEventListener('pointermove', (e) => {
+            if (!dragging || !bgAdjustMode) return;
+            const curX = Number(proConfig.chatTheme.chatBgX) || 0;
+            const curY = Number(proConfig.chatTheme.chatBgY) || 0;
+            proConfig.chatTheme.chatBgX = Math.max(-280, Math.min(280, Math.round(curX + (e.clientX - lx))));
+            proConfig.chatTheme.chatBgY = Math.max(-320, Math.min(320, Math.round(curY + (e.clientY - ly))));
+            lx = e.clientX; ly = e.clientY;
+            applyChatTheme(proConfig.chatTheme);
+        });
+
+        const endBgDrag = () => {
+            if (dragging) { dragging = false; saveSkin(); }
+        };
+        bgLayer.addEventListener('pointerup', endBgDrag);
+        bgLayer.addEventListener('pointercancel', endBgDrag);
+
+        bgLayer.addEventListener('wheel', (e) => {
+            if (!bgAdjustMode || !proConfig.chatTheme?.chatBgImage) return;
+            e.preventDefault();
+            const cur = parseFloat(proConfig.chatTheme.chatBgScale) || 1;
+            proConfig.chatTheme.chatBgScale = Math.max(0.5, Math.min(2.4, Number((cur + (e.deltaY < 0 ? 0.08 : -0.08)).toFixed(2))));
+            syncSettingsUI();
+            saveSkin();
+        }, { passive: false });
+
+        bgLayer.addEventListener('touchstart', (e) => {
+            if (!bgAdjustMode || e.touches.length !== 2) return;
+            dragging = false;
+            pinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            pinchStartScale = parseFloat(proConfig.chatTheme.chatBgScale) || 1;
+        }, { passive: true });
+
+        bgLayer.addEventListener('touchmove', (e) => {
+            if (!bgAdjustMode || e.touches.length !== 2 || !pinchDist) return;
+            e.preventDefault();
+            const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            proConfig.chatTheme.chatBgScale = Math.max(0.5, Math.min(2.4, Number((pinchStartScale * (dist / pinchDist)).toFixed(2))));
+            syncSettingsUI();
+        }, { passive: false });
+
+        bgLayer.addEventListener('touchend', () => {
+            if (bgAdjustMode && pinchDist) { pinchDist = 0; saveSkin(); }
+        }, { passive: true });
+    }
+
+    // 4. 换肤应用（含背景平移 + 缩放）
     function applyChatTheme(theme = proConfig.chatTheme) {
         const drawer = document.getElementById('commDrawer');
         if (!drawer) return;
@@ -770,18 +679,22 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         if (mainImg.src !== t.chatBgImage) mainImg.src = t.chatBgImage;
 
         const blurPx = Math.max(0, parseFloat(t.chatBgBlur) || 0);
+        const bgScale = Math.max(0.5, Math.min(2.4, parseFloat(t.chatBgScale) || 1));
+        const bgX = Number(t.chatBgX) || 0;
+        const bgY = Number(t.chatBgY) || 0;
+        const blurBoost = (t.chatBgMode === 'cover' && blurPx > 0) ? (1 + blurPx * 0.01) : 1;
+
         mainImg.style.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
-        mainImg.style.transform = (t.chatBgMode === 'cover' && blurPx > 0) ? `scale(${(1 + blurPx * 0.01).toFixed(3)})` : 'none';
+        mainImg.style.transform = `translate(${bgX}px, ${bgY}px) scale(${(bgScale * blurBoost).toFixed(3)})`;
         const dim = Math.max(0, Math.min(0.85, parseFloat(t.chatBgDim) || 0));
         overlay.style.background = `rgba(15, 14, 13, ${dim})`;
     }
 
-    // 5. 挂载 UI：背景层 + 顶栏「完成调整」按钮 + 右下角齿轮键 & 悬浮小组件 + 防抖/多选条 + 右键菜单 + 撤回弹窗
+    // 5. 挂载 UI
     function mountChatProUI() {
         const drawer = document.getElementById('commDrawer');
         if (!drawer || document.getElementById('chatGearPopover')) return;
 
-        // 5.1 独立背景层
         const bgLayer = document.createElement('div');
         bgLayer.id = 'chatBgLayer';
         bgLayer.className = 'chat-bg-layer';
@@ -791,10 +704,17 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             <div class="chat-bg-overlay" id="chatBgOverlay"></div>
         `;
         drawer.insertBefore(bgLayer, drawer.firstChild);
+        bindChatBgGestures(bgLayer);
 
-        // 5.2 顶栏只补充一个“调节模式完成”隐藏按钮（平时不占位，顶栏干净到只有 ✕！）
         const actions = drawer.querySelector('.im-actions');
         if (actions) {
+            const bgDoneBtn = document.createElement('button');
+            bgDoneBtn.type = 'button';
+            bgDoneBtn.className = 'chat-bg-done-btn';
+            bgDoneBtn.innerText = '✓ 锁背景';
+            bgDoneBtn.onclick = () => setBgAdjustMode(false);
+            actions.insertBefore(bgDoneBtn, actions.firstChild);
+
             const doneBtn = document.createElement('button');
             doneBtn.type = 'button';
             doneBtn.className = 'chat-adjust-done-btn';
@@ -803,7 +723,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             actions.insertBefore(doneBtn, actions.firstChild);
         }
 
-        // 5.3 右下角蓝色发送键左侧插入 ⚙️ 齿轮按钮
         const inputBar = drawer.querySelector('.im-input-bar');
         const sendBtn = document.getElementById('imSendBtn');
         if (inputBar && sendBtn && !document.getElementById('chatProGearBtn')) {
@@ -813,14 +732,10 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             gearBtn.className = 'im-tool-btn';
             gearBtn.innerText = '⚙️';
             gearBtn.title = '展开聊天小组件（重生成 / 撤回 / 换肤 / 引擎 / 调尺寸）';
-            gearBtn.onclick = (e) => {
-                e.stopPropagation();
-                toggleGearPopover();
-            };
+            gearBtn.onclick = (e) => { e.stopPropagation(); toggleGearPopover(); };
             inputBar.insertBefore(gearBtn, sendBtn);
         }
 
-        // 5.4 ⚙️ 悬浮工具小组件（收拢全部控制项，彻底无惧窗口缩小！）
         const popover = document.createElement('div');
         popover.id = 'chatGearPopover';
         popover.className = 'chat-gear-popover';
@@ -846,7 +761,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                 <button type="button" class="gear-tab-btn" data-gtab="size" onclick="window.ChatPro.switchGearTab('size')">📐 窗口</button>
             </div>
 
-            <!-- 板块 1：小手机引擎 -->
             <div class="gear-tab-pane active" id="gearPane_engine">
                 <div class="chat-pro-row">
                     <label><input type="checkbox" id="chkProSplit" checked onchange="window.ChatPro.saveSettings()"> 💬 $ 分段连发 + 独立语音气泡</label>
@@ -865,8 +779,14 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                 </div>
             </div>
 
-            <!-- 板块 2：专属换肤与壁纸 -->
+            <!-- 板块 2：专属换肤与壁纸（支持自由拖动/缩放 + 可选本机独立不覆盖另一端！） -->
             <div class="gear-tab-pane" id="gearPane_skin">
+                <div class="chat-pro-row" style="background:rgba(255,255,255,0.04);padding:5px 7px;border-radius:8px;">
+                    <label title="关闭时手机传图自动同步电脑；开启后本机独立自定义，互不覆盖">
+                        <input type="checkbox" id="chkSkinLocalOnly" onchange="window.ChatPro.toggleLocalSkinOnly(this.checked)">
+                        <span style="font-size:11.5px;">📱 本机独立皮肤（不覆盖另一端）</span>
+                    </label>
+                </div>
                 <div class="chat-skin-grid">
                     <label class="chat-skin-color-item">
                         <span>我的气泡</span>
@@ -882,10 +802,12 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                     </label>
                 </div>
                 <div class="chat-pro-row">
-                    <span style="color:#d6d3d1;font-size:11.5px;">🖼️ 独立背景图</span>
-                    <div style="display:flex;gap:4px;">
+                    <span style="color:#d6d3d1;font-size:11.5px;">🖼️ 聊天背景</span>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
                         <input type="file" id="skinChatBgFile" accept="image/*" style="display:none" onchange="window.ChatPro.uploadSkinBg(event)">
                         <button type="button" class="chat-debounce-btn primary" onclick="document.getElementById('skinChatBgFile').click()">📂 选图</button>
+                        <button type="button" class="chat-debounce-btn" id="skinBgAdjustBtn" onclick="window.ChatPro.toggleBgAdjustMode()">✋ 拖背景</button>
+                        <button type="button" class="chat-debounce-btn" onclick="window.ChatPro.resetSkinBgTransform()">归位</button>
                         <button type="button" class="chat-debounce-btn" onclick="window.ChatPro.clearSkinBg()">清除</button>
                         <button type="button" class="chat-debounce-btn" onclick="window.ChatPro.resetSkin()">默认</button>
                     </div>
@@ -894,6 +816,10 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                     <option value="cover">🖼️ 铺满沉浸（Cover 居中裁剪）</option>
                     <option value="blur">💿 流光不裁图（底层高斯模糊 + 中间原图）</option>
                 </select>
+                <div style="font-size:11px;color:#a8a29e;">
+                    <div style="display:flex;justify-content:space-between;"><span>背景缩放（也可点「✋ 拖背景」手拖/捏合）</span><span id="skinScaleVal">100%</span></div>
+                    <input type="range" id="skinChatBgScale" min="0.5" max="2.4" step="0.02" value="1" style="width:100%;accent-color:var(--accent,#d97706);" oninput="window.ChatPro.liveSkinPreview()" onchange="window.ChatPro.saveSkin()">
+                </div>
                 <div class="chat-skin-sliders">
                     <div>
                         <div>模糊：<span id="skinBlurVal">0px</span></div>
@@ -906,7 +832,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                 </div>
             </div>
 
-            <!-- 板块 3：窗口大小与手机手势说明 -->
             <div class="gear-tab-pane" id="gearPane_size">
                 <div class="chat-pro-row">
                     <span style="color:#d6d3d1;font-size:11.5px;">当前规格</span>
@@ -928,12 +853,9 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         document.addEventListener('click', (e) => {
             const pop = document.getElementById('chatGearPopover');
             const gBtn = document.getElementById('chatProGearBtn');
-            if (pop?.classList.contains('open') && !pop.contains(e.target) && !gBtn?.contains(e.target)) {
-                closeGearPopover();
-            }
+            if (pop?.classList.contains('open') && !pop.contains(e.target) && !gBtn?.contains(e.target)) closeGearPopover();
         });
 
-        // 5.5 防抖倒计时条 & 多选删除条
         const debBar = document.createElement('div');
         debBar.id = 'chatDebounceBar';
         debBar.className = 'chat-debounce-bar';
@@ -960,7 +882,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             inputBar.parentNode.insertBefore(multiBar, inputBar);
         }
 
-        // 5.6 气泡右键 / 手机长按悬浮菜单
         if (!document.getElementById('chatBubbleCtxMenu')) {
             const menu = document.createElement('div');
             menu.id = 'chatBubbleCtxMenu';
@@ -972,20 +893,18 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                 <button type="button" class="chat-ctx-item danger" onclick="window.ChatPro.ctxDeleteOne(true)">🧹 删气泡并同步删记忆</button>
             `;
             document.body.appendChild(menu);
-            document.addEventListener('click', (e) => {
-                if (!menu.contains(e.target)) hideCtxMenu();
-            });
+            document.addEventListener('click', (e) => { if (!menu.contains(e.target)) hideCtxMenu(); });
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     hideCtxMenu();
                     closeGearPopover();
                     setAdjustMode(false);
+                    if (bgAdjustMode) setBgAdjustMode(false);
                     if (multiSelectMode) exitMultiSelect();
                 }
             });
         }
 
-        // 5.7 撤回确认弹窗（带实时气泡预览）
         if (!document.getElementById('chatUndoConfirmModal')) {
             const modal = document.createElement('div');
             modal.id = 'chatUndoConfirmModal';
@@ -1020,7 +939,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             document.body.appendChild(modal);
         }
 
-        // 5.8 输入框回车防输入法误触
         const imInput = document.getElementById('imInput');
         if (imInput) {
             imInput.removeAttribute('onkeydown');
@@ -1062,6 +980,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         setChk('chkProSplit', proConfig.chatSplitEnabled);
         setChk('chkProDelay', proConfig.chatTypingDelay);
         setChk('chkProDebounce', proConfig.chatDebounceEnabled);
+        setChk('chkSkinLocalOnly', localSkinOnly);
         const secEl = document.getElementById('inpProDebounceSec');
         if (secEl) secEl.value = String(proConfig.chatDebounceSec || 10);
 
@@ -1071,8 +990,11 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         setVal('skinAiBubble', t.aiBubbleBg);
         setVal('skinChatBg', t.chatBgColor);
         setVal('skinChatBgMode', t.chatBgMode || 'cover');
+        setVal('skinChatBgScale', String(t.chatBgScale ?? 1));
         setVal('skinChatBgBlur', String(t.chatBgBlur ?? 0));
         setVal('skinChatBgDim', String(t.chatBgDim ?? 0.35));
+        const sLbl = document.getElementById('skinScaleVal');
+        if (sLbl) sLbl.innerText = `${Math.round((t.chatBgScale ?? 1) * 100)}%`;
         const bLbl = document.getElementById('skinBlurVal');
         if (bLbl) bLbl.innerText = `${t.chatBgBlur ?? 0}px`;
         const dLbl = document.getElementById('skinDimVal');
@@ -1086,7 +1008,9 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             const res = await fetch(`${API_BASE}/api/chat/pro-settings`);
             const data = await res.json();
             if (res.ok && data.success) {
-                proConfig = { ...proConfig, ...data, chatTheme: { ...DEFAULT_THEME, ...(data.chatTheme || {}) } };
+                const cloudTheme = { ...DEFAULT_THEME, ...(data.chatTheme || {}) };
+                const activeTheme = localSkinOnly ? (loadLocalTheme() || cloudTheme) : cloudTheme;
+                proConfig = { ...proConfig, ...data, chatTheme: activeTheme };
                 syncSettingsUI();
             }
         } catch {}
@@ -1120,6 +1044,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             aiBubbleBg: document.getElementById('skinAiBubble')?.value || DEFAULT_THEME.aiBubbleBg,
             chatBgColor: document.getElementById('skinChatBg')?.value || DEFAULT_THEME.chatBgColor,
             chatBgMode: document.getElementById('skinChatBgMode')?.value || 'cover',
+            chatBgScale: parseFloat(document.getElementById('skinChatBgScale')?.value) || 1,
             chatBgBlur: parseFloat(document.getElementById('skinChatBgBlur')?.value) || 0,
             chatBgDim: parseFloat(document.getElementById('skinChatBgDim')?.value) || 0
         };
@@ -1127,6 +1052,8 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
 
     function liveSkinPreview() {
         proConfig.chatTheme = readSkinFromInputs();
+        const sLbl = document.getElementById('skinScaleVal');
+        if (sLbl) sLbl.innerText = `${Math.round((proConfig.chatTheme.chatBgScale || 1) * 100)}%`;
         const bLbl = document.getElementById('skinBlurVal');
         if (bLbl) bLbl.innerText = `${proConfig.chatTheme.chatBgBlur}px`;
         const dLbl = document.getElementById('skinDimVal');
@@ -1137,12 +1064,28 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
     async function saveSkin() {
         proConfig.chatTheme = readSkinFromInputs();
         applyChatTheme(proConfig.chatTheme);
+        if (localSkinOnly) {
+            saveLocalTheme(proConfig.chatTheme);
+            return;
+        }
         try {
             await fetch(`${API_BASE}/api/chat/pro-settings`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chatTheme: proConfig.chatTheme })
             });
         } catch {}
+    }
+
+    async function toggleLocalSkinOnly(enabled) {
+        localSkinOnly = Boolean(enabled);
+        try { localStorage.setItem(LOCAL_SKIN_ONLY_KEY, localSkinOnly ? '1' : '0'); } catch {}
+        if (localSkinOnly) {
+            saveLocalTheme(proConfig.chatTheme);
+            appendSysPill('📱 已开启本机独立皮肤：后续换肤仅保存在这台设备，绝不覆盖另一端～');
+        } else {
+            await loadProSettings();
+            appendSysPill('☁️ 已恢复双端同步皮肤：已加载云端聊天框装扮～');
+        }
     }
 
     async function uploadSkinBg(event) {
@@ -1157,10 +1100,10 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
                     r.onerror = reject;
                     r.readAsDataURL(file);
                 });
-            proConfig.chatTheme = { ...readSkinFromInputs(), chatBgImage: imgData };
-            applyChatTheme(proConfig.chatTheme);
+            proConfig.chatTheme = { ...readSkinFromInputs(), chatBgImage: imgData, chatBgScale: 1, chatBgX: 0, chatBgY: 0 };
+            syncSettingsUI();
             await saveSkin();
-            appendSysPill('🖼️ 聊天框专属背景图已生效～');
+            appendSysPill(localSkinOnly ? '🖼️ 本机聊天背景已生效（点「✋ 拖背景」可自由调构图）～' : '🖼️ 聊天背景已双端同步生效（点「✋ 拖背景」可自由调构图）～');
         } catch (e) {
             appendSysPill(`⚠️ 背景图加载失败：${e.message}`);
         }
@@ -1168,13 +1111,15 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
     }
 
     async function clearSkinBg() {
-        proConfig.chatTheme = { ...readSkinFromInputs(), chatBgImage: '' };
-        applyChatTheme(proConfig.chatTheme);
+        if (bgAdjustMode) setBgAdjustMode(false);
+        proConfig.chatTheme = { ...readSkinFromInputs(), chatBgImage: '', chatBgScale: 1, chatBgX: 0, chatBgY: 0 };
+        syncSettingsUI();
         await saveSkin();
         appendSysPill('🫧 已清除聊天框背景图');
     }
 
     async function resetSkin() {
+        if (bgAdjustMode) setBgAdjustMode(false);
         proConfig.chatTheme = { ...DEFAULT_THEME };
         syncSettingsUI();
         await saveSkin();
@@ -1192,9 +1137,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         menu.classList.add('show');
     }
 
-    function hideCtxMenu() {
-        document.getElementById('chatBubbleCtxMenu')?.classList.remove('show');
-    }
+    function hideCtxMenu() { document.getElementById('chatBubbleCtxMenu')?.classList.remove('show'); }
 
     function bindBubbleInteractions() {
         const box = document.getElementById('imMessagesList');
@@ -1235,8 +1178,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             if (!multiSelectMode) return;
             const row = e.target.closest('.im-bubble-row[data-msg-id]');
             if (!row) return;
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             const id = parseInt(row.dataset.msgId, 10);
             if (!id) return;
             if (selectedBubbleIds.has(id)) {
@@ -1287,9 +1229,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
     function exitMultiSelect() {
         multiSelectMode = false;
         selectedBubbleIds.clear();
-        document.querySelectorAll('#imMessagesList .im-bubble-row').forEach(row => {
-            row.classList.remove('multi-selectable', 'multi-selected');
-        });
+        document.querySelectorAll('#imMessagesList .im-bubble-row').forEach(row => row.classList.remove('multi-selectable', 'multi-selected'));
         updateMultiBarUI();
     }
 
@@ -1300,10 +1240,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         if (txt) navigator.clipboard?.writeText(txt).then(() => appendSysPill('📋 已复制气泡文字')).catch(() => {});
     }
 
-    function ctxEnterMulti() {
-        hideCtxMenu();
-        enterMultiSelect(ctxTargetMsgId);
-    }
+    function ctxEnterMulti() { hideCtxMenu(); enterMultiSelect(ctxTargetMsgId); }
 
     async function deleteBubblesByIds(ids, syncMemory) {
         if (!ids.length) return;
@@ -1335,10 +1272,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         }
     }
 
-    async function ctxDeleteOne(syncMemory) {
-        hideCtxMenu();
-        if (ctxTargetMsgId) await deleteBubblesByIds([ctxTargetMsgId], syncMemory);
-    }
+    async function ctxDeleteOne(syncMemory) { hideCtxMenu(); if (ctxTargetMsgId) await deleteBubblesByIds([ctxTargetMsgId], syncMemory); }
 
     async function confirmBatchDelete(syncMemory) {
         const ids = Array.from(selectedBubbleIds);
@@ -1437,6 +1371,9 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         const uAva = renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我');
         box.innerHTML = list.map(m => {
             const idAttr = m.id ? `data-msg-id="${m.id}"` : '';
+            if (m.role === 'system') {
+                return `<div class="chat-sys-pill" ${idAttr}>${esc(m.content)}</div>`;
+            }
             return m.role === 'user'
                 ? `<div class="im-bubble-row user" ${idAttr}><div class="im-bubble">${window.renderBubbleInnerHtml(m.content)}</div><div class="bubble-avatar">${uAva}</div></div>`
                 : `<div class="im-bubble-row assistant" ${idAttr}><div class="bubble-avatar">${cAva}</div><div class="im-bubble">${window.renderBubbleInnerHtml(m.content)}</div></div>`;
@@ -1447,6 +1384,15 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
     window.appendBubble = function (role, content, isTyping = false, opts = {}) {
         const box = document.getElementById('imMessagesList');
         if (!box) return null;
+        if (role === 'system') {
+            const pill = document.createElement('div');
+            pill.className = 'chat-sys-pill';
+            if (opts.msgId) pill.dataset.msgId = String(opts.msgId);
+            pill.innerText = content;
+            box.appendChild(pill);
+            if (typeof scrollChatToBottom === 'function') scrollChatToBottom();
+            return pill;
+        }
         if (!box.querySelector('.im-bubble-row') && !box.querySelector('.chat-sys-pill')) box.innerHTML = '';
         const row = document.createElement('div');
         row.className = `im-bubble-row ${role}${opts.queued ? ' queued' : ''}`;
@@ -1480,6 +1426,14 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         for (let i = 0; i < replyMsgs.length; i++) {
             if (runId !== streamSessionId) return;
             const msg = replyMsgs[i];
+            const isSys = msg.role === 'system' || msg.kind === 'sys';
+            if (isSys) {
+                if (i > 0) await sleep(220);
+                if (runId !== streamSessionId) return;
+                if (typeof chatHistory !== 'undefined') chatHistory.push(msg);
+                window.appendBubble('system', msg.content, false, { msgId: msg.id });
+                continue;
+            }
             if (i > 0 && proConfig.chatTypingDelay) {
                 setSubStatus(msg.kind === 'voice' ? '🎙️ 对方正在录制语音...' : '⌨️ 对方正在输入...');
                 const typingRow = window.appendBubble('assistant', msg.kind === 'voice' ? '🎙️ • • •' : '• • •', true);
@@ -1490,15 +1444,20 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
             if (typeof chatHistory !== 'undefined') chatHistory.push(msg);
             window.appendBubble('assistant', msg.content, false, { msgId: msg.id });
         }
+        resetSubStatus();
+    }
+
+    // 供专注结束 / 主动消息等外部事件直接调用的拟人分段吐气泡接口！
+    function deliverExternalBubbles(msgs) {
+        if (!Array.isArray(msgs) || !msgs.length) return;
+        deliverReplyBubblesSequentially(msgs, streamSessionId);
     }
 
     // 9. AstrBot 防抖合并队列
     function stopDebounceTimers() {
         clearTimeout(debounceTimer);
         clearInterval(debounceCountdownInterval);
-        debounceTimer = null;
-        debounceCountdownInterval = null;
-        debounceDeadline = 0;
+        debounceTimer = null; debounceCountdownInterval = null; debounceDeadline = 0;
     }
 
     function updateDebounceBarUI() {
@@ -1602,7 +1561,7 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         }
     }
 
-    // 10. 聊天框专属 /reroll & /clear(N)
+    // 10. /reroll & /clear(N)
     async function executeReroll() {
         if (appConfig.soloMode) return;
         if (isRequestInFlight) { appendSysPill('⏳ 请等当前回复完成后再 /reroll 哦～'); return; }
@@ -1743,7 +1702,6 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         if (typeof window.loadChatHistory === 'function') {
             const origLoad = window.loadChatHistory;
             window.loadChatHistory = async function () {
-                // 正在等 AI 回复或一条条吐气泡时，拦截后台轮询刷新，防止“正在打字”消失并一次性全蹦出来！
                 if (isRequestInFlight) return;
                 abortAllPendingAndStreams();
                 return origLoad.apply(this, arguments);
@@ -1764,6 +1722,10 @@ const DRAWER_GEOM_KEY = 'study_room_chat_drawer_geom_v2';
         closeGear: closeGearPopover,
         switchGearTab,
         toggleAdjustMode: toggleAdjustModeFromWidget,
+        toggleBgAdjustMode,
+        resetSkinBgTransform,
+        toggleLocalSkinOnly,
+        deliverExternalBubbles,
         setQuickSize,
         saveSettings,
         flushNow,

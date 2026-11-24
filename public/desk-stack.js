@@ -1,8 +1,9 @@
-// public/desk-stack.js —— 6卡叠放桌面小组件（第1卡默认天气：全球实况+梦境自定 + 精品水吧 + 丝滑SAN值 + 御神签 + DDL + 状态）+ 🌌 深度专注
+// public/desk-stack.js —— 6卡叠放桌面小组件（天气/水吧/SAN值/御神签/DDL/状态 + 双端云同步 + 联动粒子）+ 🌌 深度专注
 (function () {
     const OLD_STORE_KEY = 'study_room_desk_stack_v1';
     const STACK_STORE_KEY = 'study_room_desk_stack_v2';
     const ZEN_STORE_KEY = 'study_room_zen_prefs_v1';
+    const getApiBase = () => (typeof API_BASE !== 'undefined' ? API_BASE : '');
 
     const MOODS = [
         { id: 'reading', label: '📖 沉浸阅读' },
@@ -21,42 +22,12 @@
     ];
 
     const DRINK_CATS = [
-        {
-            id: 'coffee', icon: '☕', name: '咖啡', color: '#92400e',
-            temps: ['冰', '热'], defaultTemp: '冰',
-            flavors: ['美式', '卡布奇诺', '摩卡', '自定义'],
-            placeholder: '如：生椰拿铁 / 澳白'
-        },
-        {
-            id: 'milktea', icon: '🧋', name: '奶茶', color: '#a855f7',
-            temps: ['冰', '热'], defaultTemp: '冰',
-            flavors: ['芋泥波波', '珍珠奶茶', '自定义'],
-            placeholder: '如：霸王茶姬 / 抹茶奶绿'
-        },
-        {
-            id: 'tea', icon: '🍵', name: '茶饮', color: '#22c55e',
-            temps: ['热', '冰'], defaultTemp: '热',
-            flavors: ['绿茶', '红茶', '乌龙茶', '普洱茶', '自定义'],
-            placeholder: '如：茉莉花茶 / 鸭屎香'
-        },
-        {
-            id: 'soda', icon: '🥤', name: '碳酸', color: '#dc2626',
-            temps: ['冰', '热'], defaultTemp: '冰',
-            flavors: ['可乐', '雪碧', '芬达', '自定义'],
-            placeholder: '如：元气森林 / 姜汁可乐'
-        },
-        {
-            id: 'cocoa', icon: '🍫', name: '可可', color: '#b45309',
-            temps: ['热', '冰'], defaultTemp: '热',
-            flavors: ['经典可可', '海盐可可', '热牛奶', '自定义'],
-            placeholder: '如：棉花糖可可 / 燕麦奶'
-        },
-        {
-            id: 'water', icon: '🫗', name: '纯水', color: '#38bdf8',
-            temps: ['温', '冰'], defaultTemp: '温',
-            flavors: ['白开水', '气泡水', '柠檬水', '自定义'],
-            placeholder: '如：电解质水 / 蜂蜜水'
-        }
+        { id: 'coffee', icon: '☕', name: '咖啡', color: '#92400e', temps: ['冰', '热'], defaultTemp: '冰', flavors: ['美式', '卡布奇诺', '摩卡', '自定义'], placeholder: '如：生椰拿铁 / 澳白' },
+        { id: 'milktea', icon: '🧋', name: '奶茶', color: '#a855f7', temps: ['冰', '热'], defaultTemp: '冰', flavors: ['芋泥波波', '珍珠奶茶', '自定义'], placeholder: '如：霸王茶姬 / 抹茶奶绿' },
+        { id: 'tea', icon: '🍵', name: '茶饮', color: '#22c55e', temps: ['热', '冰'], defaultTemp: '热', flavors: ['绿茶', '红茶', '乌龙茶', '普洱茶', '自定义'], placeholder: '如：茉莉花茶 / 鸭屎香' },
+        { id: 'soda', icon: '🥤', name: '碳酸', color: '#dc2626', temps: ['冰', '热'], defaultTemp: '冰', flavors: ['可乐', '雪碧', '芬达', '自定义'], placeholder: '如：元气森林 / 姜汁可乐' },
+        { id: 'cocoa', icon: '🍫', name: '可可', color: '#b45309', temps: ['热', '冰'], defaultTemp: '热', flavors: ['经典可可', '海盐可可', '热牛奶', '自定义'], placeholder: '如：棉花糖可可 / 燕麦奶' },
+        { id: 'water', icon: '🫗', name: '纯水', color: '#38bdf8', temps: ['温', '冰'], defaultTemp: '温', flavors: ['白开水', '气泡水', '柠檬水', '自定义'], placeholder: '如：电解质水 / 蜂蜜水' }
     ];
 
     const FORTUNES = [
@@ -78,7 +49,6 @@
         { level: '慎行', tag: '张弛之道', yi: '适时止损、早休养神', ji: '熬夜硬撑' }
     ];
 
-    // 🌦️ 天气卡排第 1 块，打开默认看窗外天气！
     const CARD_DEFS = [
         { key: 'weather', title: '🌦️ 窗外天气' },
         { key: 'drink', title: '☕ 桌角精品水吧' },
@@ -99,56 +69,50 @@
         return DRINK_CATS.some(c => c.id === mapped) ? mapped : 'coffee';
     }
 
+    function normalizeState(raw = {}, hasV2 = true) {
+        const drinkCat = normalizeDrinkCatId(raw.drinkCat || raw.drinkId || 'coffee');
+        const catObj = DRINK_CATS.find(c => c.id === drinkCat) || DRINK_CATS[0];
+        return {
+            activeIdx: hasV2 && typeof raw.activeIdx === 'number' ? raw.activeIdx : 0,
+            weather: {
+                mode: raw.weather?.mode === 'custom' ? 'custom' : 'live',
+                cityQuery: raw.weather?.cityQuery || '东京',
+                liveCity: raw.weather?.liveCity || '',
+                liveTemp: raw.weather?.liveTemp ?? null,
+                liveFeels: raw.weather?.liveFeels ?? null,
+                liveHumidity: raw.weather?.liveHumidity ?? null,
+                liveDesc: raw.weather?.liveDesc || '',
+                liveIcon: raw.weather?.liveIcon || '⛅',
+                updatedAt: raw.weather?.updatedAt || 0,
+                customCity: raw.weather?.customCity || '希望之峰',
+                customIcon: raw.weather?.customIcon || '🌧️',
+                customDesc: raw.weather?.customDesc || '雨打窗棂',
+                customTemp: typeof raw.weather?.customTemp === 'number' ? raw.weather.customTemp : 14
+            },
+            mood: raw.mood || '沉浸阅读',
+            drinkCat,
+            drinkTemp: raw.drinkTemp || catObj.defaultTemp,
+            drinkFlavor: raw.drinkFlavor || catObj.flavors[0],
+            drinkCustomMap: (raw.drinkCustomMap && typeof raw.drinkCustomMap === 'object') ? raw.drinkCustomMap : {},
+            drinkLevel: typeof raw.drinkLevel === 'number' ? raw.drinkLevel : 100,
+            drinkRefills: raw.drinkRefills || 0,
+            quest: raw.quest || '打磨作品集',
+            san: typeof raw.san === 'number' ? raw.san : 78,
+            fortuneDate: raw.fortuneDate || '',
+            fortuneIdx: typeof raw.fortuneIdx === 'number' ? raw.fortuneIdx : -1,
+            ddlTitle: raw.ddlTitle || '目标冲刺日',
+            ddlDate: raw.ddlDate || '',
+            syncUpdatedAt: Number(raw.syncUpdatedAt) || 0
+        };
+    }
+
     function loadStackState() {
         try {
             const v2Raw = localStorage.getItem(STACK_STORE_KEY);
             const raw = JSON.parse(v2Raw || localStorage.getItem(OLD_STORE_KEY) || '{}');
-            const drinkCat = normalizeDrinkCatId(raw.drinkCat || raw.drinkId || 'coffee');
-            const catObj = DRINK_CATS.find(c => c.id === drinkCat) || DRINK_CATS[0];
-            return {
-                // 首次升级至 v2 时强制默认落在第 1 块天气卡片！
-                activeIdx: v2Raw && typeof raw.activeIdx === 'number' ? raw.activeIdx : 0,
-                weather: {
-                    mode: raw.weather?.mode === 'custom' ? 'custom' : 'live',
-                    cityQuery: raw.weather?.cityQuery || '东京',
-                    liveCity: raw.weather?.liveCity || '',
-                    liveTemp: raw.weather?.liveTemp ?? null,
-                    liveFeels: raw.weather?.liveFeels ?? null,
-                    liveHumidity: raw.weather?.liveHumidity ?? null,
-                    liveDesc: raw.weather?.liveDesc || '',
-                    liveIcon: raw.weather?.liveIcon || '⛅',
-                    updatedAt: raw.weather?.updatedAt || 0,
-                    customCity: raw.weather?.customCity || '希望之峰',
-                    customIcon: raw.weather?.customIcon || '🌧️',
-                    customDesc: raw.weather?.customDesc || '雨打窗棂',
-                    customTemp: typeof raw.weather?.customTemp === 'number' ? raw.weather.customTemp : 14
-                },
-                mood: raw.mood || '沉浸阅读',
-                drinkCat,
-                drinkTemp: raw.drinkTemp || catObj.defaultTemp,
-                drinkFlavor: raw.drinkFlavor || catObj.flavors[0],
-                drinkCustomMap: (raw.drinkCustomMap && typeof raw.drinkCustomMap === 'object') ? raw.drinkCustomMap : {},
-                drinkLevel: typeof raw.drinkLevel === 'number' ? raw.drinkLevel : 100,
-                drinkRefills: raw.drinkRefills || 0,
-                quest: raw.quest || '打磨作品集',
-                san: typeof raw.san === 'number' ? raw.san : 78,
-                fortuneDate: raw.fortuneDate || '',
-                fortuneIdx: typeof raw.fortuneIdx === 'number' ? raw.fortuneIdx : -1,
-                ddlTitle: raw.ddlTitle || '目标冲刺日',
-                ddlDate: raw.ddlDate || ''
-            };
+            return normalizeState(raw, Boolean(v2Raw));
         } catch {
-            return {
-                activeIdx: 0,
-                weather: {
-                    mode: 'live', cityQuery: '东京', liveCity: '', liveTemp: null, liveFeels: null,
-                    liveHumidity: null, liveDesc: '', liveIcon: '⛅', updatedAt: 0,
-                    customCity: '希望之峰', customIcon: '🌧️', customDesc: '雨打窗棂', customTemp: 14
-                },
-                mood: '沉浸阅读', drinkCat: 'coffee', drinkTemp: '冰', drinkFlavor: '美式', drinkCustomMap: {},
-                drinkLevel: 100, drinkRefills: 0, quest: '打磨作品集', san: 78,
-                fortuneDate: '', fortuneIdx: -1, ddlTitle: '目标冲刺日', ddlDate: ''
-            };
+            return normalizeState({}, true);
         }
     }
 
@@ -166,8 +130,48 @@
     let isZenMode = false;
     let weatherFetching = false;
     let weatherError = '';
+    let cloudPushTimer = null;
 
-    function saveStackState() { try { localStorage.setItem(STACK_STORE_KEY, JSON.stringify(state)); } catch {} }
+    function pushStackStateToServer() {
+        clearTimeout(cloudPushTimer);
+        cloudPushTimer = setTimeout(() => {
+            fetch(`${getApiBase()}/api/desk/state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(state)
+            }).catch(() => {});
+        }, 350);
+    }
+
+async function pullStackStateFromServer() {
+        try {
+            const res = await fetch(`${getApiBase()}/api/desk/state`);
+            if (!res.ok) return;
+            const json = await res.json();
+            const remote = json?.data;
+            if (!remote || typeof remote !== 'object') {
+                pushStackStateToServer();
+                return;
+            }
+            const prevCity = state.weather?.cityQuery;
+            state = normalizeState(remote, true);
+            localStorage.setItem(STACK_STORE_KEY, JSON.stringify(state));
+            renderStackCard();
+            window.WeatherFX?.sync?.();
+            if (
+                state.weather.mode === 'live' &&
+                (state.weather.liveTemp === null || state.weather.cityQuery !== prevCity)
+            ) {
+                fetchLiveWeather(state.weather.cityQuery, false);
+            }
+        } catch {}
+    }
+
+    function saveStackState(syncCloud = true) {
+        if (syncCloud) state.syncUpdatedAt = Date.now();
+        try { localStorage.setItem(STACK_STORE_KEY, JSON.stringify(state)); } catch {}
+        if (syncCloud) pushStackStateToServer();
+    }
     function saveZenPrefs() { try { localStorage.setItem(ZEN_STORE_KEY, JSON.stringify(zenPrefs)); } catch {} }
 
     function esc(str) {
@@ -195,7 +199,6 @@
         const query = String(cityInput !== null ? cityInput : (state.weather.cityQuery || '北京')).trim();
         if (!query) return;
 
-        // 30 分钟内非强制刷新复用缓存
         if (!force && state.weather.liveTemp !== null && state.weather.cityQuery === query && Date.now() - (state.weather.updatedAt || 0) < 30 * 60 * 1000) {
             return;
         }
@@ -203,11 +206,10 @@
         state.weather.cityQuery = query;
         weatherFetching = true;
         weatherError = '';
-        saveStackState();
+        saveStackState(force);
         renderStackCard();
 
         try {
-            // 优先 Open-Meteo 全球免 Key 实况接口（支持中英文城市名）
             const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=1&language=zh&format=json`);
             if (!geoRes.ok) throw new Error('地理定位服务暂不可用');
             const geo = await geoRes.json();
@@ -231,7 +233,6 @@
             state.weather.updatedAt = Date.now();
             weatherError = '';
         } catch (err1) {
-            // 自动降级备胎：wttr.in
             try {
                 const wRes = await fetch(`https://wttr.in/${encodeURIComponent(query)}?format=j1&lang=zh`);
                 if (!wRes.ok) throw err1;
@@ -248,13 +249,14 @@
                 state.weather.liveDesc = descZh;
                 state.weather.updatedAt = Date.now();
                 weatherError = '';
-            } catch (err2) {
+            } catch {
                 weatherError = err1.message || '网络波动，可切「✨ 自定」手写窗外天气～';
             }
         } finally {
             weatherFetching = false;
-            saveStackState();
+            saveStackState(true);
             renderStackCard();
+            window.WeatherFX?.sync?.();
         }
     }
 
@@ -306,16 +308,13 @@
             .desk-stack-body { animation: dstackFade 0.2s ease-out; }
             @keyframes dstackFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-            /* 🌦️ 窗外天气卡 */
             .ds-w-mode-row { display: flex; gap: 5px; margin-bottom: 7px; align-items: center; }
             .ds-w-tab {
                 flex: 1; padding: 3.5px 6px; border-radius: 8px; font-size: 11px; text-align: center;
                 background: var(--card-subtle); border: 1px solid var(--card-border); color: var(--text-muted-on-card);
                 cursor: pointer; transition: all 0.16s;
             }
-            .ds-w-tab.active {
-                background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); font-weight: 600;
-            }
+            .ds-w-tab.active { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); font-weight: 600; }
             .ds-w-search-row { display: flex; gap: 5px; margin-bottom: 7px; }
             .ds-w-search-row .ds-input { margin-bottom: 0; flex: 1; min-width: 0; }
             .ds-w-hero {
@@ -337,7 +336,6 @@
             .ds-w-custom-top { display: grid; grid-template-columns: 1.45fr 0.75fr; gap: 5px; margin-bottom: 6px; }
             .ds-w-custom-top .ds-input { margin-bottom: 0; }
 
-            /* 精品定制水吧 */
             .ds-drink-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 7px; }
             .ds-drink-pill {
                 background: var(--card-subtle); border: 1px solid var(--card-border); color: var(--text-on-card);
@@ -397,7 +395,6 @@
             .ds-ddl-banner { display: flex; justify-content: space-between; align-items: baseline; background: var(--card-subtle); border: 1px solid var(--card-border); border-radius: 10px; padding: 6px 10px; font-size: 11.5px; }
             .ds-ddl-num { font-size: 18px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 
-            /* 🌌 深度专注极简模式 */
             body.zen-focus-mode .top-bar,
             body.zen-focus-mode .left-desk-column,
             body.zen-focus-mode .right-panel,
@@ -474,7 +471,6 @@
                 `;
             }
 
-            // ✨ 梦境/赛博自定模式（填任意地名 + 氛围 + 温度！）
             return `
                 ${tabsHtml}
                 <div class="ds-w-custom-top">
@@ -623,11 +619,12 @@
         }
     }
 
-    // 天气交互
+    // 天气交互（所有改动自动同步云端并刷新粒子）
     function setWeatherMode(mode) {
         state.weather.mode = mode === 'custom' ? 'custom' : 'live';
-        saveStackState();
+        saveStackState(true);
         renderStackCard();
+        window.WeatherFX?.sync?.();
         if (state.weather.mode === 'live' && state.weather.liveTemp === null) {
             fetchLiveWeather(state.weather.cityQuery, false);
         }
@@ -644,22 +641,23 @@
         const w = state.weather;
         el.innerText = `${w.customIcon} 窗外正处于「${w.customCity || '未知坐标'} · ${w.customDesc} ${w.customTemp}°C」`;
     }
-    function setCustomWeatherCity(val) { state.weather.customCity = String(val || '').slice(0, 16); saveStackState(); updateCustomWeatherPreview(); }
+    function setCustomWeatherCity(val) { state.weather.customCity = String(val || '').slice(0, 16); saveStackState(true); updateCustomWeatherPreview(); }
     function setCustomWeatherTemp(val) {
         const n = parseInt(val, 10);
         if (!isNaN(n)) state.weather.customTemp = Math.max(-30, Math.min(50, n));
-        saveStackState();
+        saveStackState(true);
         updateCustomWeatherPreview();
     }
     function pickCustomWeather(icon, label) {
         state.weather.customIcon = icon;
         state.weather.customDesc = label;
-        saveStackState();
+        saveStackState(true);
         renderStackCard();
+        window.WeatherFX?.sync?.();
     }
 
-    function shiftCard(delta) { state.activeIdx = (state.activeIdx + delta + CARD_DEFS.length) % CARD_DEFS.length; saveStackState(); renderStackCard(); }
-    function jumpCard(idx) { state.activeIdx = idx; saveStackState(); renderStackCard(); }
+    function shiftCard(delta) { state.activeIdx = (state.activeIdx + delta + CARD_DEFS.length) % CARD_DEFS.length; saveStackState(true); renderStackCard(); }
+    function jumpCard(idx) { state.activeIdx = idx; saveStackState(true); renderStackCard(); }
 
     function pickDrinkCat(catId) {
         const cat = DRINK_CATS.find(c => c.id === catId) || DRINK_CATS[0];
@@ -667,40 +665,40 @@
         state.drinkTemp = cat.defaultTemp;
         state.drinkFlavor = cat.flavors[0];
         if (state.drinkLevel <= 0) state.drinkLevel = 100;
-        saveStackState();
+        saveStackState(true);
         renderStackCard();
     }
     function toggleDrinkTemp() {
         const cat = getCurrentDrinkCat();
         const curIdx = cat.temps.indexOf(state.drinkTemp);
         state.drinkTemp = cat.temps[(curIdx + 1) % cat.temps.length];
-        saveStackState();
+        saveStackState(true);
         renderStackCard();
     }
     function pickDrinkFlavor(fl) {
         state.drinkFlavor = fl;
-        saveStackState();
+        saveStackState(true);
         renderStackCard();
         if (fl === '自定义') setTimeout(() => document.getElementById('dsCustomDrinkInput')?.focus(), 30);
     }
     function setCustomDrink(val) {
         state.drinkCustomMap[state.drinkCat] = String(val || '').slice(0, 16);
-        saveStackState();
+        saveStackState(true);
         const lbl = document.getElementById('dsCurrentDrinkLabel');
         if (lbl) { const name = getCurrentDrinkDisplayName(); lbl.innerText = name; lbl.title = name; }
     }
     function sipOrRefill() {
         if (state.drinkLevel <= 0) { state.drinkLevel = 100; state.drinkRefills = (state.drinkRefills || 0) + 1; }
         else { state.drinkLevel = Math.max(0, state.drinkLevel - 20); }
-        saveStackState();
+        saveStackState(true);
         renderStackCard();
     }
 
-    function setQuest(val) { state.quest = String(val || '').slice(0, 24); saveStackState(); }
+    function setQuest(val) { state.quest = String(val || '').slice(0, 24); saveStackState(true); }
     function setSan(val) {
         const n = parseInt(val, 10);
         state.san = isNaN(n) ? 50 : Math.max(0, Math.min(100, n));
-        saveStackState();
+        saveStackState(true);
         const info = getSanDescriptor(state.san);
         const lbl = document.getElementById('dsSanLabel');
         const num = document.getElementById('dsSanNum');
@@ -712,12 +710,12 @@
         let next = Math.floor(Math.random() * FORTUNES.length);
         if (next === state.fortuneIdx && FORTUNES.length > 1) next = (next + 1) % FORTUNES.length;
         state.fortuneIdx = next;
-        saveStackState();
+        saveStackState(true);
         renderStackCard();
     }
-    function setDdlTitle(val) { state.ddlTitle = String(val || '').slice(0, 16); saveStackState(); }
-    function setDdlDate(val) { state.ddlDate = String(val || ''); saveStackState(); renderStackCard(); }
-    function setMood(m) { state.mood = m; saveStackState(); renderStackCard(); }
+    function setDdlTitle(val) { state.ddlTitle = String(val || '').slice(0, 16); saveStackState(true); }
+    function setDdlDate(val) { state.ddlDate = String(val || ''); saveStackState(true); renderStackCard(); }
+    function setMood(m) { state.mood = m; saveStackState(true); renderStackCard(); }
 
     function hookDeskSummary() {
         const origGetDeskSummary = window.getDeskSummary;
@@ -725,7 +723,6 @@
             const origStr = typeof origGetDeskSummary === 'function' ? origGetDeskSummary() : '';
             const parts = [];
 
-            // 🌦️ 窗外天气优先注入上下文！
             const w = state.weather;
             if (w.mode === 'custom') {
                 parts.push(`窗外天气：${w.customCity || '窗外'} ${w.customDesc} ${w.customTemp}°C`);
@@ -824,9 +821,11 @@
         const tryMount = () => {
             if (document.querySelector('.desk-mood-card')) {
                 renderStackCard();
-                if (state.weather.mode === 'live') {
-                    fetchLiveWeather(state.weather.cityQuery, false);
-                }
+                pullStackStateFromServer().then(() => {
+                    if (state.weather.mode === 'live' && state.weather.liveTemp === null) {
+                        fetchLiveWeather(state.weather.cityQuery, false);
+                    }
+                });
                 return true;
             }
             return false;
@@ -840,13 +839,18 @@
         setTimeout(tryMount, 400);
     }
 
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) pullStackStateFromServer();
+    });
+
     window.DeskStack = {
         shiftCard, jumpCard,
         setWeatherMode, searchCityWeather, refreshWeather,
         setCustomWeatherCity, setCustomWeatherTemp, pickCustomWeather,
         pickDrinkCat, toggleDrinkTemp, pickDrinkFlavor, setCustomDrink, sipOrRefill,
         setQuest, setSan, drawFortune, setDdlTitle, setDdlDate, setMood,
-        setZenMode, toggleZenMode, toggleZenWidget, toggleAutoZen
+        setZenMode, toggleZenMode, toggleZenWidget, toggleAutoZen,
+        syncNow: pullStackStateFromServer
     };
 
     injectStyles();

@@ -1,6 +1,7 @@
-// public/pet/pet-engine.js —— 像素桌宠大脑（6只萌宠 + 高空抛食弹跳 + 侧边防裁切气泡 + 抛球次数清零 + 全局状态同步）
+// public/pet/pet-engine.js —— 像素桌宠大脑（6只萌宠 + 高空抛食弹跳 + 侧边防裁切气泡 + 抛球次数清零 + 双端云同步）
 (function () {
     const STORE_KEY = 'study_room_pet_v2';
+    const getApiBase = () => (typeof API_BASE !== 'undefined' ? API_BASE : '');
 
     function getPetSize() {
         return window.innerWidth <= 768 ? 62 : 76;
@@ -21,22 +22,82 @@
                 posX: typeof raw.posX === 'number' ? raw.posX : null,
                 posY: typeof raw.posY === 'number' ? raw.posY : null,
                 lastEvent: raw.lastEvent || '',
-                lastEventTs: raw.lastEventTs || 0
+                lastEventTs: raw.lastEventTs || 0,
+                updatedAt: raw.updatedAt || 0
             };
         } catch {
-            return { petId: 'cat', mode: 'roam', side: 'right', syncToAI: true, hunger: 85, mood: 90, catches: 0, nicks: {}, posX: null, posY: null, lastEvent: '', lastEventTs: 0 };
+            return { petId: 'cat', mode: 'roam', side: 'right', syncToAI: true, hunger: 85, mood: 90, catches: 0, nicks: {}, posX: null, posY: null, lastEvent: '', lastEventTs: 0, updatedAt: 0 };
         }
     }
 
     const cfg = loadState();
-    function saveState() { localStorage.setItem(STORE_KEY, JSON.stringify(cfg)); }
+    let cloudPushTimer = null;
+
+    function buildCloudPayload() {
+        return {
+            petId: cfg.petId,
+            mode: cfg.mode,
+            side: cfg.side,
+            syncToAI: cfg.syncToAI,
+            hunger: cfg.hunger,
+            mood: cfg.mood,
+            catches: cfg.catches,
+            nicks: cfg.nicks,
+            lastEvent: cfg.lastEvent,
+            lastEventTs: cfg.lastEventTs,
+            updatedAt: cfg.updatedAt
+        };
+    }
+
+    function pushStateToServer() {
+        clearTimeout(cloudPushTimer);
+        cloudPushTimer = setTimeout(() => {
+            fetch(`${getApiBase()}/api/pet/state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildCloudPayload())
+            }).catch(() => {});
+        }, 320);
+    }
+
+    async function pullStateFromServer() {
+        try {
+            const res = await fetch(`${getApiBase()}/api/pet/state`);
+            if (!res.ok) return;
+            const json = await res.json();
+            const remote = json?.data;
+            if (!remote || typeof remote !== 'object') {
+                // 仅当服务器完全空白（首次初始化）时才上传一次
+                pushStateToServer();
+                return;
+            }
+            cfg.petId = remote.petId || cfg.petId;
+            cfg.mode = remote.mode || cfg.mode;
+            cfg.side = remote.side || cfg.side;
+            cfg.syncToAI = remote.syncToAI !== false;
+            if (typeof remote.hunger === 'number') cfg.hunger = remote.hunger;
+            if (typeof remote.mood === 'number') cfg.mood = remote.mood;
+            if (typeof remote.catches === 'number') cfg.catches = remote.catches;
+            if (remote.nicks && typeof remote.nicks === 'object') cfg.nicks = { ...remote.nicks };
+            if (typeof remote.lastEvent === 'string') cfg.lastEvent = remote.lastEvent;
+            if (typeof remote.lastEventTs === 'number') cfg.lastEventTs = remote.lastEventTs;
+            localStorage.setItem(STORE_KEY, JSON.stringify(cfg));
+            applyPetVisuals();
+        } catch {}
+    }
+
+    function saveState(syncCloud = true) {
+        if (syncCloud) cfg.updatedAt = Date.now();
+        localStorage.setItem(STORE_KEY, JSON.stringify(cfg));
+        if (syncCloud) pushStateToServer();
+    }
 
     let actorEl, canvasEl, bubbleEl, topBtnEl, panelEl;
     let posX = cfg.posX ?? Math.max(80, window.innerWidth - 180);
     let posY = cfg.posY ?? Math.max(100, window.innerHeight - 130);
     let targetX = posX, targetY = posY;
     let facingLeft = false;
-    let actionState = 'idle'; // 'walk' | 'idle' | 'sit' | 'sleep' | 'happy' | 'rage'
+    let actionState = 'idle';
     let animTick = 0, isRoomFocusing = false, lockUntil = 0, rageUntil = 0, bubbleTimer = null;
 
     let clickStamps = [];
@@ -57,7 +118,7 @@
     function recordPetEvent(text) {
         cfg.lastEvent = text;
         cfg.lastEventTs = Date.now();
-        saveState();
+        saveState(true);
         updatePanelUI();
     }
 
@@ -192,7 +253,7 @@
             const fx = pet.isFish ? '🫧' : (pet.isBird ? '🪶' : '❓');
             triggerHappy(pick(pet.tickleLines), fx, 1);
             cfg.mood = clamp(cfg.mood + 1, 0, 100);
-            saveState();
+            saveState(true);
             updatePanelUI();
         } else {
             const fxMap = { fish: '🫧', pig: '💖', hamster: '🌻', bird: '🎵' };
@@ -210,12 +271,11 @@
             cfg.lastEvent = '';
             cfg.lastEventTs = 0;
         }
-        saveState();
+        saveState(true);
         updatePanelUI();
         say('接球记录清零啦，重新来比过！', 2600);
     }
 
-    // 🎯 高空抛食 & 任意点击抛球模式
     let pendingDropType = null;
     let aimBannerEl = null;
 
@@ -311,16 +371,13 @@
     function dropSnack(isDeluxe = false) {
         if (isDeluxe) {
             const x = clamp(120 + Math.random() * (window.innerWidth - 240), 80, window.innerWidth - 100);
-            const y = 52;
-            spawnSnackAt(x, y, true);
+            spawnSnackAt(x, 52, true);
         } else {
             enterAimMode('snack');
         }
     }
 
-    function throwBall() {
-        enterAimMode('ball');
-    }
+    function throwBall() { enterAimMode('ball'); }
 
     document.addEventListener('pointerdown', (e) => {
         if (!pendingDropType) return;
@@ -354,7 +411,9 @@
     function updatePanelUI() {
         const pet = getPet();
         if (topBtnEl) {
-            topBtnEl.innerHTML = pet ? `${pet.emoji} <span>${getNick(pet)}</span>` : `🐾 <span>桌宠</span>`;
+            const nick = pet ? getNick(pet) : '桌宠';
+            topBtnEl.innerHTML = `${pet ? pet.emoji : '🐾'} <span>${nick}</span>`;
+            topBtnEl.title = pet ? `桌宠：${nick}（点击打开控制台）` : '打开像素桌宠控制面板';
         }
         if (!panelEl) return;
 
@@ -412,7 +471,7 @@
         clickStamps = [];
         rageUntil = 0;
         actorEl?.classList.remove('raging');
-        saveState();
+        saveState(true);
         applyPetVisuals();
         if (petId !== 'off') {
             const pet = getPet();
@@ -427,7 +486,7 @@
         if (mode === 'side') {
             cfg.side = posX < window.innerWidth / 2 ? 'left' : 'right';
         }
-        saveState();
+        saveState(true);
         applyPos();
         updatePanelUI();
         const modeTips = {
@@ -494,7 +553,7 @@
                 </div>
             </div>
             <div>
-                <div class="pet-section-label">选择小伙伴</div>
+                <div class="pet-section-label">选择小伙伴（双端自动同步）</div>
                 <div class="pet-pill-grid">
                     <button type="button" class="pet-pill-btn" data-pet="cat">🐱 猫</button>
                     <button type="button" class="pet-pill-btn" data-pet="dog">🐶 狗</button>
@@ -531,6 +590,7 @@
 
         topBtnEl.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (typeof window.closeTopBarPopovers === 'function') window.closeTopBarPopovers();
             panelEl.classList.toggle('open');
             updatePanelUI();
         });
@@ -546,13 +606,13 @@
         document.getElementById('petResetCatchBtn').addEventListener('click', () => resetCatches());
         document.getElementById('petSyncToAIChk').addEventListener('change', (e) => {
             cfg.syncToAI = e.target.checked;
-            saveState();
+            saveState(true);
         });
         document.getElementById('petNickInput').addEventListener('input', (e) => {
             const pet = getPet();
             if (!pet) return;
             cfg.nicks[pet.id] = e.target.value.trim();
-            saveState();
+            saveState(true);
             if (topBtnEl) topBtnEl.innerHTML = `${pet.emoji} <span>${getNick(pet)}</span>`;
         });
 
@@ -589,14 +649,17 @@
             actorEl.classList.remove('dragging');
             if (dragging) {
                 dragging = false;
+                let sideChanged = false;
                 if (cfg.mode === 'side') {
-                    cfg.side = posX < window.innerWidth / 2 ? 'left' : 'right';
+                    const nextSide = posX < window.innerWidth / 2 ? 'left' : 'right';
+                    if (nextSide !== cfg.side) { cfg.side = nextSide; sideChanged = true; }
                 }
                 cfg.posX = posX;
                 cfg.posY = posY;
                 targetX = posX;
                 targetY = posY;
-                saveState();
+                // 仅本地保存屏幕坐标，除非侧边吸附左右方向变了才推送云端
+                saveState(sideChanged);
                 applyPos();
             } else {
                 handlePetClick();
@@ -604,8 +667,13 @@
         });
 
         window.addEventListener('resize', () => applyPos());
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) pullStateFromServer();
+        });
+
         applyPetVisuals();
         pickNewRoamTarget();
+        pullStateFromServer();
     }
 
     function startLoops() {
@@ -675,7 +743,7 @@
                                     triggerHappy(pick(pet.playLines), '🎉', 3);
                                     recordPetEvent(`刚在桌面上追着接住了${pet.ballEmoji}（累计接球${cfg.catches}次）`);
                                 }
-                                saveState();
+                                saveState(true);
                                 updatePanelUI();
                                 if (cfg.mode === 'side') applyPos();
                             } else {
@@ -698,7 +766,6 @@
                         } else {
                             const spd = pet.isFish && isRoomFocusing ? pet.speed * 0.45 : pet.speed;
                             posX += (dx / d) * spd;
-                            // 小鸟飞行时带一点点轻盈上下波浪感
                             const flutter = pet.isBird ? Math.sin(Date.now() / 110) * 0.55 : 0;
                             posY += (dy / d) * spd + flutter;
                             facingLeft = dx < 0;
@@ -752,7 +819,7 @@
         setInterval(() => {
             if (!getPet()) return;
             cfg.hunger = clamp(cfg.hunger - 1, 20, 100);
-            saveState();
+            saveState(false);
             updatePanelUI();
         }, 240000);
     }
@@ -804,13 +871,63 @@
             }).observe(noteContent, { childList: true, characterData: true, subtree: true });
         }
     }
+    function aiInteract(action, charName = 'TA', isRemote = false) {
+        const pet = getPet();
+        if (!pet || !actorEl) return;
+        const x = Math.round(window.innerWidth * (0.32 + Math.random() * 0.36));
 
+        if (action === 'feed') {
+            spawnSnackAt(x, 78, false);
+            say(`${charName}隔空投喂了${pet.snackName}✨`, 4200);
+            return;
+        }
+        if (action === 'ball') {
+            spawnBallAt(x, Math.round(window.innerHeight * 0.36));
+            say(`${charName}陪我抛${pet.ballEmoji}玩啦！`, 4200);
+            return;
+        }
+        if (action === 'rage') {
+            rageUntil = Date.now() + 4200;
+            lockUntil = rageUntil;
+            actionState = 'rage';
+            actorEl.classList.add('raging');
+            drawCurrentFrame();
+            const fxIcon = pet.isFish ? '😵' : (pet.id === 'dog' ? '💫' : '💢');
+            spawnFx(fxIcon, -10);
+            setTimeout(() => spawnFx(fxIcon, 12), 200);
+            say(`喂！${charName}怎么也隔空戳我💢`, 4500);
+            if (!isRemote) {
+                cfg.mood = clamp(cfg.mood - 4, 15, 100);
+                recordPetEvent(`刚被${charName}隔空戳炸毛了`);
+            }
+            setTimeout(() => {
+                if (actorEl && Date.now() >= rageUntil) {
+                    actorEl.classList.remove('raging');
+                    actionState = 'sit';
+                    drawCurrentFrame();
+                }
+            }, 4300);
+            return;
+        }
+
+        // happy / pat
+        const fxMap = { fish: '🫧', pig: '💖', hamster: '🌻', bird: '🎵' };
+        triggerHappy(`${charName}隔空摸我啦开心✨`, fxMap[pet.id] || '❤️', 3);
+        say(`${charName}隔空摸我啦开心✨`, 4500);
+        if (!isRemote) {
+            cfg.mood = clamp(cfg.mood + 3, 0, 100);
+            recordPetEvent(`刚被${charName}隔空摸头夸奖了`);
+        }
+    }
     window.StudyPet = {
         select: selectPet,
         say,
         feed: () => dropSnack(false),
         playBall: throwBall,
         resetCatches,
+        aiInteract,
+        syncNow: pullStateFromServer,
+        closePanel: () => panelEl?.classList.remove('open'),
         getContextSummary() {
             const pet = getPet();
             if (!pet || !cfg.syncToAI) return '';

@@ -30,7 +30,11 @@ app.use(express.json({ limit: '25mb' }));
 // 上传的图片/音频走 30 天浏览器强缓存（因为带内容哈希，换图自动换链接，旧图 0ms 秒开！）
 app.use('/uploads', express.static(mediaStore.UPLOAD_DIR, { maxAge: '30d', immutable: true }));
 app.use(express.static(path.join(__dirname, 'public')));
-
+const { registerHomeRoutes } = require('./home-routes');
+const homeApi = registerHomeRoutes(app, {
+    dataDir: path.join(__dirname, 'data'),
+    mediaStore
+});
 const DEFAULT_INK_COLOR = '#1c1917';
 
 function saveSetting(key, value) {
@@ -376,6 +380,9 @@ function getRoomContextSummary(extra = {}) {
     if (extra.deskSummary) extraInfo += `\n- ${extra.deskSummary}`;
     extraInfo += widgetMemoLine;
 
+    const homeSummary = homeApi.getRoomSummaryText(charKey);
+    if (homeSummary) extraInfo += `\n- ${homeSummary}`;
+
     return `【线上自习室实时状态】
 - 时间：${timeVibe}
 - 同步阅读书目：${bookInfo}
@@ -449,6 +456,7 @@ app.get('/api/config', (req, res) => {
         soloMode: getBoolSetting('soloMode', false),
         notifyOnFocusDecision: getBoolSetting('notifyOnFocusDecision', true),
         notifyOnPauseTimeout: getBoolSetting('notifyOnPauseTimeout', true),
+        notifyOnFocusComplete: getBoolSetting('notifyOnFocusComplete', true),
         apiKey: validKey,
         baseURL: getSetting('baseURL') || process.env.BASE_URL || 'https://api.deepseek.com/v1',
         modelName: getSetting('modelName') || process.env.MODEL_NAME || 'deepseek-chat',
@@ -474,6 +482,10 @@ app.get('/api/config', (req, res) => {
         accentColor: getSetting('accentColor', '#d97706'),
         timerColor: getSetting('timerColor', '#fef3c7'),
         bgImage: getSetting('bgImage', ''),
+        bgImageMobile: getSetting('bgImageMobile', ''),
+        timerNoShadow: getBoolSetting('timerNoShadow', false),
+        activeBookId: getSetting('activeBookId', ''),
+        activeSongId: getSetting('activeSongId', ''),
         bgMode: getSetting('bgMode', 'cover'),
         bgBlur: parseFloat(getSetting('bgBlur', '0')) || 0,
         bgDim: parseFloat(getSetting('bgDim', '0.32')) || 0,
@@ -499,23 +511,22 @@ app.post('/api/config', (req, res) => {
     }
     // 已移除旧 contextLimit，避免「⚙️ 设置」表单保存时覆盖统一的 memoMaxContextRounds
     const allowedKeys = [
-        'mode', 'soloMode', 'notifyOnFocusDecision', 'notifyOnPauseTimeout',
+        'mode', 'soloMode', 'notifyOnFocusDecision', 'notifyOnPauseTimeout', 'notifyOnFocusComplete',
         'apiKey', 'baseURL', 'modelName', 'systemPreset', 'activeCharKey', 'presetProfile',
         'charName', 'persona', 'charAvatar',
         'activeUserId', 'userName', 'useQuickRelation', 'userRelation', 'charCallUser', 'userPersona', 'userAvatar',
         'inkColor', 'noteColor', 'pageBgColor', 'cardBgColor', 'accentColor', 'timerColor',
-        'bgImage', 'bgMode', 'bgBlur', 'bgDim',
+        'bgImage', 'bgImageMobile', 'bgMode', 'bgBlur', 'bgDim', 'timerNoShadow','activeBookId', 'activeSongId',
         'ttsBaseURL', 'ttsApiKey', 'ttsGroupId', 'ttsModel', 'voiceEnabled', 'voiceId', 'voiceSpeed', 'voicePrompt'
     ];
-    const boolKeys = new Set(['useQuickRelation', 'soloMode', 'notifyOnFocusDecision', 'notifyOnPauseTimeout', 'voiceEnabled']);
-
+    const boolKeys = new Set(['useQuickRelation', 'soloMode', 'notifyOnFocusDecision', 'notifyOnPauseTimeout', 'notifyOnFocusComplete', 'voiceEnabled', 'timerNoShadow']);
     for (const key of allowedKeys) {
         if (req.body[key] !== undefined) {
             if (boolKeys.has(key)) {
                 saveSetting(key, req.body[key] ? 'true' : 'false');
             } else if (key === 'voicePrompt') {
                 saveSetting(key, sanitizeCharVoiceOverride(req.body[key]));
-            } else if (['bgImage', 'charAvatar', 'userAvatar'].includes(key)) {
+            } else if (['bgImage', 'bgImageMobile', 'charAvatar', 'userAvatar'].includes(key)) {
                 saveSetting(key, mediaStore.persistMedia(req.body[key], key));
             } else {
                 saveSetting(key, req.body[key]);
@@ -831,6 +842,8 @@ app.post('/api/tts/test', async (req, res) => {
 });
 
 // --- 接口：放弃 / 动摇后继续 / 暂停耗尽 / 完整通关 ---
+let lastFocusCompleteAt = 0; // 🛡️ 防手机+电脑双端同时到点触发两次通关结算！
+
 app.post('/api/focus/decision', async (req, res) => {
     const {
         decision = 'abandon', elapsedMinutes = 0, remainingMinutes = 25, totalMinutes = 25,
@@ -839,13 +852,27 @@ app.post('/api/focus/decision', async (req, res) => {
     const charKey = getActiveCharKey();
     const reqEpoch = getMemoryEpoch(charKey);
 
+    // 15 秒内若已有另一台设备刚结算过一轮 complete，直接安静放行，绝不重复发币/发两条消息！
+    if (decision === 'complete') {
+        const now = Date.now();
+        if (now - lastFocusCompleteAt < 15000) {
+            return res.json({ success: true, skipped: true, duplicate: true });
+        }
+        lastFocusCompleteAt = now;
+    }
+
+    let coinReceipt = null;
     if (decision === 'abandon' || decision === 'pause_timeout') {
         db.prepare("INSERT INTO sessions (type, duration) VALUES ('abandon', ?)").run(elapsedMinutes * 60);
     } else if (decision === 'complete') {
         db.prepare("INSERT INTO sessions (type, duration) VALUES ('complete', ?)").run(totalMinutes * 60);
+        coinReceipt = homeApi.awardFocusCoins(totalMinutes);
     }
 
-    if (getBoolSetting('soloMode', false)) return res.json({ success: true, skipped: true });
+    if (getBoolSetting('soloMode', false)) return res.json({ success: true, skipped: true, homeCoins: coinReceipt });
+    if (decision === 'complete' && !getBoolSetting('notifyOnFocusComplete', true)) {
+        return res.json({ success: true, skipped: true, homeCoins: coinReceipt });
+    }
     if ((decision === 'abandon' || decision === 'continue') && !getBoolSetting('notifyOnFocusDecision', true)) {
         return res.json({ success: true, skipped: true });
     }
@@ -881,7 +908,7 @@ app.post('/api/focus/decision', async (req, res) => {
             eventPrompt = `[${nowTs}] ${userName}（动作·确认放弃专注）：提前结束了原定 ${totalMinutes} 分钟的番茄钟（本次坚持了 ${elapsedMinutes} 分钟，还剩 ${remainingMinutes} 分钟）。请通过「通讯」发一条简短消息回应对方。`;
             memoryUserLine = `（动作·确认放弃专注）提前放弃了原定${totalMinutes}分钟的专注（坚持了${elapsedMinutes}分钟，还剩${remainingMinutes}分钟）`;
         } else if (decision === 'complete') {
-            eventPrompt = `[${nowTs}] ${userName}（动作·完成一轮专注）：完整坚持完了整整 ${totalMinutes} 分钟的番茄钟，页边批注也已全部显影！请通过「通讯」发一条简短消息回应对方。`;
+            eventPrompt = `[${nowTs}] ${userName}（动作·完成一轮专注）：完整坚持完了整整 ${totalMinutes} 分钟的番茄钟，请通过「通讯」发一条简短消息回应对方。`;
             memoryUserLine = `（动作·完成一轮专注）完整完成了${totalMinutes}分钟的专注番茄钟，书页批注已显影`;
         } else {
             eventPrompt = `[${nowTs}] ${userName}（动作·动摇后继续专注）：刚才点开放弃确认框动摇了一下，但最后还是点了【继续专注】留了下来（原定 ${totalMinutes} 分钟，已坚持 ${elapsedMinutes} 分钟，还剩 ${remainingMinutes} 分钟）。请通过「通讯」发一条简短消息回应对方。`;
@@ -892,21 +919,39 @@ app.post('/api/focus/decision', async (req, res) => {
         const response = await openai.chat.completions.create({ model: getModelName(), messages });
 
         const replyText = cleanAIOutput(response.choices[0].message.content, charName);
-        let msgId = null;
+        const splitEnabled = getBoolSetting('chatSplitEnabled', true);
+        const rawPieces = splitEnabled
+            ? replyText.split(/\s*\$\s*|\r?\n+/).map(s => s.trim()).filter(Boolean)
+            : [replyText];
+        const finalPieces = rawPieces.length ? rawPieces : [replyText];
+
+        const chatMsgs = [];
         if (getMemoryEpoch(charKey) === reqEpoch) {
-            const chatInfo = vault.getMemoryDb(charKey)
-                .prepare('INSERT INTO chat_messages (char_key, role, content) VALUES (?, ?, ?)')
-                .run(charKey, 'assistant', replyText);
-            msgId = chatInfo.lastInsertRowid;
+            const insertChat = vault.getMemoryDb(charKey)
+                .prepare('INSERT INTO chat_messages (char_key, role, content) VALUES (?, ?, ?)');
+            for (const piece of finalPieces) {
+                const chatInfo = insertChat.run(charKey, 'assistant', piece);
+                chatMsgs.push({
+                    id: chatInfo.lastInsertRowid,
+                    role: 'assistant',
+                    content: piece,
+                    charLen: piece.length
+                });
+            }
             pushMemory('focus_decision', 'user', memoryUserLine, charKey, reqEpoch);
-            pushMemory('focus_decision', 'assistant', replyText, charKey, reqEpoch);
+            pushMemory('focus_decision', 'assistant', finalPieces.join('\n'), charKey, reqEpoch);
         }
 
         res.json({
-            success: true, decision, reply: replyText,
-            chatMsg: { id: msgId, role: 'assistant', content: replyText },
+            success: true,
+            decision,
+            reply: finalPieces.join('\n'),
+            chatMsg: chatMsgs[0] || { id: null, role: 'assistant', content: replyText },
+            chatMsgs,
+            homeCoins: coinReceipt,
             memoryCount: getMemoryCount(charKey)
         });
+
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
     }
@@ -1596,6 +1641,10 @@ app.delete('/api/playlist/:id', (req, res) => {
 });
 
 // --- 接口 9：🖼️ 桌面图片小组件（单次视觉直通 + <memo> 记忆回填）---
+app.get('/api/widgets', (req, res) => {
+    const rows = db.prepare('SELECT * FROM widgets ORDER BY id DESC').all();
+    res.json({ success: true, data: rows });
+});
 app.post('/api/widgets', (req, res) => {
     const { image_data, caption = '', visible_to_ai = 0 } = req.body;
     if (!image_data) return res.status(400).json({ success: false, message: '图片不能为空' });
@@ -1603,14 +1652,6 @@ app.post('/api/widgets', (req, res) => {
     const vis = visible_to_ai ? 1 : 0;
     const info = db.prepare('INSERT INTO widgets (image_data, caption, visible_to_ai, ai_memo) VALUES (?, ?, ?, ?)').run(savedUrl, caption, vis, '');
     res.json({ success: true, widget: { id: info.lastInsertRowid, image_data: savedUrl, caption, visible_to_ai: vis, ai_memo: '' } });
-});
-
-app.post('/api/widgets', (req, res) => {
-    const { image_data, caption = '', visible_to_ai = 0 } = req.body;
-    if (!image_data) return res.status(400).json({ success: false, message: '图片不能为空' });
-    const vis = visible_to_ai ? 1 : 0;
-    const info = db.prepare('INSERT INTO widgets (image_data, caption, visible_to_ai, ai_memo) VALUES (?, ?, ?, ?)').run(image_data, caption, vis, '');
-    res.json({ success: true, widget: { id: info.lastInsertRowid, image_data, caption, visible_to_ai: vis, ai_memo: '' } });
 });
 
 app.patch('/api/widgets/:id/visibility', (req, res) => {
@@ -1690,6 +1731,75 @@ app.post('/api/widgets/:id/observe', async (req, res) => {
 app.delete('/api/widgets/:id', (req, res) => {
     db.prepare('DELETE FROM widgets WHERE id = ?').run(req.params.id);
     res.json({ success: true });
+});
+// --- 🐾 像素桌宠双端云同步（共用 settings 表，手机/电脑自动同步） ---
+app.get('/api/pet/state', (req, res) => {
+    try {
+        const raw = getSetting('petStateJson', '');
+        res.json({ success: true, data: raw ? JSON.parse(raw) : null });
+    } catch {
+        res.json({ success: true, data: null });
+    }
+});
+
+app.post('/api/pet/state', (req, res) => {
+    try {
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        saveSetting('petStateJson', JSON.stringify(body));
+        res.json({ success: true });
+    } catch (e) {
+        res.status(400).json({ success: false, message: e.message });
+    }
+});
+
+// --- 🌦️ 桌面叠放卡片（天气城市 / 梦境天气 / 水吧 / SAN值 / DDL）双端云同步 ---
+app.get('/api/desk/state', (req, res) => {
+    try {
+        const raw = getSetting('deskStackJson', '');
+        res.json({ success: true, data: raw ? JSON.parse(raw) : null });
+    } catch {
+        res.json({ success: true, data: null });
+    }
+});
+
+app.post('/api/desk/state', (req, res) => {
+    try {
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        saveSetting('deskStackJson', JSON.stringify(body));
+        res.json({ success: true });
+    } catch (e) {
+        res.status(400).json({ success: false, message: e.message });
+    }
+});
+
+app.get('/api/desk/stats', (req, res) => {
+    try { const raw = getSetting('deskStatsJson', ''); res.json({ success: true, data: raw ? JSON.parse(raw) : null }); }
+    catch { res.json({ success: true, data: null }); }
+});
+
+app.post('/api/desk/stats', (req, res) => {
+    try { saveSetting('deskStatsJson', JSON.stringify(req.body || {})); res.json({ success: true }); }
+    catch (e) { res.status(400).json({ success: false, message: e.message }); }
+});
+
+// --- ⏱️ 番茄钟状态双端云同步（手机/电脑实时同步开始、暂停、重置） ---
+app.get('/api/timer/state', (req, res) => {
+    try {
+        const raw = getSetting('timerStateJson', '');
+        res.json({ success: true, data: raw ? JSON.parse(raw) : null });
+    } catch {
+        res.json({ success: true, data: null });
+    }
+});
+
+app.post('/api/timer/state', (req, res) => {
+    try {
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        saveSetting('timerStateJson', JSON.stringify(body));
+        res.json({ success: true });
+    } catch (e) {
+        res.status(400).json({ success: false, message: e.message });
+    }
 });
 
 // --- 接口 10：MCP 外部框架桥接 ---
