@@ -4,7 +4,7 @@ const { booksDb, musicDb } = require('./db');
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = {
-    name: 'online-companion-study-room',
+    name: 'ClouDrift',
     version: '1.0.0'
 };
 
@@ -121,6 +121,8 @@ module.exports = function registerMcpBridge(app, ctx) {
         getRoomContextSummary, cleanAIOutput, formatLocalTimestamp, getMemoryCount
     } = ctx;
 
+    const owner = require('./mcp-owner');
+    owner.startScheduler(ctx);
     // 实时前端动作队列 & SSE 会话池
     const sseSessions = new Map(); // sessionId -> { res, heartbeat }
     const liveActionQueue = [];    // [{ id, type, action, query, createdAt }]
@@ -128,7 +130,7 @@ module.exports = function registerMcpBridge(app, ctx) {
     let lastResolvedMusic = null;  // { id, approved, reason, targetSong, ts }
 
     function pushLiveAction(act) {
-        const item = { id: actionSeq++, ...act, createdAt: Date.now() };
+        const item = { id: actionSeq++, charKey:getActiveCharKey(), ...act, createdAt: Date.now() };
         liveActionQueue.push(item);
         if (liveActionQueue.length > 30) liveActionQueue.shift();
         return item;
@@ -193,8 +195,14 @@ module.exports = function registerMcpBridge(app, ctx) {
         const userName = getSetting('userName', '我');
         const noteColor = getSetting('noteColor', '#fef08a');
 
+        if (args.eventId) {
+            const event = db.prepare("SELECT event_type,payload FROM pending_events WHERE id=? AND status='waiting' AND "+owner.ownerSQL+"=?").get(args.eventId,charKey);
+            const types = {send_study_chat:['chat_message','proactive_chat','focus_decision','slack_alert'], resolve_music_request:['music_request'], reply_study_highlight:['highlight_reply']};
+            if (!event || (types[name] && !types[name].includes(event.event_type))) throw Error('事件已处理或不属于本次角色操作');
+            if (name==='reply_study_highlight' && Number(JSON.parse(event.payload).highlightId)!==Number(args.highlightId)) throw Error('划线与事件不匹配');
+        }
         if (name === 'get_study_room_status') {
-            const pendingCount = db.prepare("SELECT COUNT(*) as cnt FROM pending_events WHERE status = 'waiting'").get()?.cnt || 0;
+            const pendingCount = db.prepare("SELECT COUNT(*) as cnt FROM pending_events WHERE status = 'waiting' AND "+owner.ownerSQL+"=?").get(charKey)?.cnt || 0;
             const summary = getRoomContextSummary({ charKey });
             const text = `${summary}\n- 当前连线角色：${charName}（独立库：${vault.getMemoryDbFilename(charKey)}，共 ${getMemoryCount(charKey)} 条记忆）\n- 近期待办清单：${readTodosText()}\n- 留声机可用歌单：${readPlaylistNames().map(t => `《${t}》`).join('、')}\n- 待处理挂起事件：${pendingCount} 条`;
             return { content: [{ type: 'text', text }] };
@@ -224,7 +232,7 @@ module.exports = function registerMcpBridge(app, ctx) {
         }
 
         if (name === 'get_pending_events') {
-            const rows = db.prepare("SELECT * FROM pending_events WHERE status = 'waiting' ORDER BY id ASC LIMIT 20").all();
+            const rows = db.prepare("SELECT * FROM pending_events WHERE status = 'waiting' AND "+owner.ownerSQL+"=? ORDER BY id ASC LIMIT 20").all(charKey);
             const parsed = rows.map(r => {
                 let payload = r.payload;
                 try { payload = JSON.parse(r.payload); } catch {}
@@ -247,7 +255,7 @@ module.exports = function registerMcpBridge(app, ctx) {
             const turnId = `mcp_${Date.now()}`;
             const ids = [];
 
-            const insChat = memDb.prepare('INSERT INTO chat_messages (char_key, role, content, turn_id) VALUES (?, ?, ?, ?)');
+            const insChat = memDb.pragma('table_info(chat_messages)').some(c=>c.name==='turn_id') ? memDb.prepare('INSERT INTO chat_messages (char_key, role, content, turn_id) VALUES (?, ?, ?, ?)') : null;
             for (const p of finalParts) {
                 try {
                     const info = insChat.run(charKey, 'assistant', p, turnId);
@@ -286,7 +294,7 @@ module.exports = function registerMcpBridge(app, ctx) {
             const hid = parseInt(args.highlightId, 10);
             const clean = cleanAIOutput(String(args.comment || '').trim(), charName);
             if (!hid || !clean) throw new Error('highlightId 和 comment 均不能为空');
-            booksDb.prepare('UPDATE highlights SET ai_comment = ? WHERE id = ?').run(clean, hid);
+            if (!booksDb.prepare('UPDATE highlights SET ai_comment = ? WHERE id = ? AND char_key=?').run(clean, hid,charKey).changes) throw Error('未找到当前角色的划线');
             vault.getMemoryDb(charKey).prepare('INSERT INTO memory_events (char_key, event_type, role, content) VALUES (?, ?, ?, ?)')
                 .run(charKey, 'highlight', 'assistant', clean);
             if (args.eventId) {
@@ -306,7 +314,7 @@ module.exports = function registerMcpBridge(app, ctx) {
             }
             vault.getMemoryDb(charKey).prepare('INSERT INTO memory_events (char_key, event_type, role, content) VALUES (?, ?, ?, ?)')
                 .run(charKey, 'music', 'assistant', reason);
-            lastResolvedMusic = { id: actionSeq++, approved, reason, targetSong, ts: Date.now() };
+            lastResolvedMusic = { charKey, id: actionSeq++, approved, reason, targetSong, ts: Date.now() };
             if (approved && targetSong) {
                 pushLiveAction({ type: 'play', query: targetSong, reason });
             }
@@ -436,6 +444,7 @@ module.exports = function registerMcpBridge(app, ctx) {
     // 1. Streamable HTTP MCP 入口（推荐：AstrBot 新版 / Cherry Studio / 通用客户端）
     app.post('/mcp', (req, res) => {
         if (!checkMcpAuth(req, res)) return;
+        if (!owner.guard(ctx, req, res, req.query.owner || req.headers['x-cloudrift-owner'])) return;
         const body = req.body;
         if (Array.isArray(body)) {
             const responses = body.map(item => handleJsonRpc(item)).filter(Boolean);
@@ -462,6 +471,7 @@ module.exports = function registerMcpBridge(app, ctx) {
     // 2. Legacy SSE MCP 入口（兼容所有支持 SSE 的 AstrBot / Cherry Studio / 客户端）
     app.get('/mcp/sse', (req, res) => {
         if (!checkMcpAuth(req, res)) return;
+        if (!owner.guard(ctx, req, res, req.query.owner || req.headers['x-cloudrift-owner'])) return;
         const sessionId = crypto.randomBytes(8).toString('hex');
         const tokenParam = req.query?.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
@@ -477,7 +487,7 @@ module.exports = function registerMcpBridge(app, ctx) {
             try { res.write(': ping\n\n'); } catch {}
         }, 25000);
 
-        sseSessions.set(sessionId, { res, heartbeat });
+        sseSessions.set(sessionId, { res, heartbeat, owner:owner.binding(ctx) });
         req.on('close', () => {
             clearInterval(heartbeat);
             sseSessions.delete(sessionId);
@@ -488,6 +498,7 @@ module.exports = function registerMcpBridge(app, ctx) {
         if (!checkMcpAuth(req, res)) return;
         const sessionId = String(req.query?.sessionId || '').trim();
         const session = sseSessions.get(sessionId);
+        if (!owner.guard(ctx, req, res, session?.owner)) return;
         const reply = handleJsonRpc(req.body);
 
         if (session && reply) {
@@ -501,11 +512,25 @@ module.exports = function registerMcpBridge(app, ctx) {
     });
 
     // 3. 前端管理界面配套接口：读写 MCP 鉴权 Token & 实时监听开关 + 前端轮询拉取外部推送！
+    app.post('/api/mcp/external-identity', (req,res) => {
+        const identity = String(req.body?.identity || '').trim().normalize('NFC');
+        if (!identity || identity.length > 160) return res.status(400).json({message:'请填写 1 至 160 字的固定身份标识'});
+        const key = 'ext_' + crypto.createHash('sha256').update(identity).digest('hex').slice(0,40);
+        db.transaction(() => {
+            saveSetting('activeCharKey',key);
+            saveSetting('charName',identity);
+            saveSetting('charAvatar','');
+            saveSetting('persona','');
+            saveSetting('mode','mcp');
+        })();
+        res.json({success:true,key});
+    });
     app.get('/api/mcp/bridge-config', (req, res) => {
         res.json({
             success: true,
             mcpToken: getSetting('mcpToken', '').trim(),
             mcpLiveSync: getBoolSetting('mcpLiveSync', true),
+            owner:owner.binding(ctx), ownerName:getSetting('charName','连线搭子'),
             activeSseClients: sseSessions.size,
             tools: TOOL_DEFINITIONS.map(t => ({ name: t.name, description: t.description }))
         });
@@ -536,8 +561,8 @@ module.exports = function registerMcpBridge(app, ctx) {
             lastChatId = memDb.prepare('SELECT COALESCE(MAX(id), 0) as m FROM chat_messages').get()?.m || 0;
             lastNoteId = memDb.prepare('SELECT COALESCE(MAX(id), 0) as m FROM notes').get()?.m || 0;
         }
-        const pendingCount = db.prepare("SELECT COUNT(*) as cnt FROM pending_events WHERE status = 'waiting'").get()?.cnt || 0;
-        const newActions = liveActionQueue.filter(a => a.id > sinceActionId);
+        const pendingCount = db.prepare("SELECT COUNT(*) as cnt FROM pending_events WHERE status = 'waiting' AND "+owner.ownerSQL+"=?").get(charKey)?.cnt || 0;
+        const newActions = liveActionQueue.filter(a => a.charKey===charKey && a.id > sinceActionId);
 
         res.json({
             success: true,
@@ -547,7 +572,7 @@ module.exports = function registerMcpBridge(app, ctx) {
             pendingCount,
             latestActionId: actionSeq - 1,
             newActions,
-            lastResolvedMusic
+            lastResolvedMusic:lastResolvedMusic?.charKey===charKey ? lastResolvedMusic : null
         });
     });
 

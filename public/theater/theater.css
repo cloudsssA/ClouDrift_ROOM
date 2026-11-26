@@ -1,0 +1,103 @@
+.theater-dialog {
+    color-scheme: dark;
+    color: var(--text-on-card);
+    background: var(--card-bg-rgba);
+    backdrop-filter: blur(32px) saturate(1.2);
+    -webkit-backdrop-filter: blur(32px) saturate(1.2);
+    border: 1px solid var(--card-border);
+    border-radius: 24px;
+    box-shadow: 0 24px 90px #0005, inset 0 1px 0 #fff2;
+    width: min(620px, calc(100vw - 28px));
+    max-height: min(84dvh, 840px);
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    font: inherit;
+}
+.theater-dialog[open] { display: flex; flex-direction: column; }
+.theater-dialog::backdrop { background: rgb(20 18 18 / 44%); }
+.theater-dialog header, .theater-dialog nav, .th-actions, .th-end, .th-row { display: flex; align-items: center; gap: 8px; }
+.theater-dialog header { padding: 23px 24px 12px; }
+.theater-dialog h2 { font-family: Georgia, "Songti SC", serif; font-size: 24px; flex: 1; margin: 0; }
+.theater-dialog nav { margin: 0 24px 8px; padding: 4px; background: var(--card-subtle); border-radius: 22px; }
+.theater-dialog button, .theater-dialog a {
+    font: inherit; font-size: 13px; line-height: 1.35; cursor: pointer; border-radius: 999px;
+    color: inherit; background: var(--card-subtle); border: 1px solid var(--card-border);
+    padding: 7px 13px; text-decoration: none;
+}
+.theater-dialog button:hover, .theater-dialog a:hover { border-color: var(--accent); }
+.theater-dialog button:disabled { opacity: .55; }
+.theater-dialog nav button { flex: 1; background: transparent; border-color: transparent; }
+.theater-dialog nav [aria-pressed=true], .theater-dialog .th-primary { background: var(--accent); color: var(--text-on-accent); }
+#th-panel { overflow: auto; overscroll-behavior: contain; padding: 10px 24px 24px; }
+#th-note { font-size: 13px; margin: 0 24px; color: var(--text-muted-on-card); }
+#th-note:not(:empty) { padding: 6px 0; }
+.th-field { display: grid; gap: 6px; margin-block: 10px; font-size: 13px; font-weight: 600; min-width: 0; }
+.theater-dialog :is(input:not([type=checkbox]), select, textarea) {
+    box-sizing: border-box; width: 100%; min-width: 0; font: inherit; font-size: 15px; font-weight: 400;
+    color: inherit; background: var(--card-subtle); border: 1px solid var(--card-border); border-radius: 12px; padding: 10px 12px;
+}
+.theater-dialog select option { color: var(--text-on-card); background: var(--card-bg-solid); }
+.theater-dialog textarea { resize: vertical; line-height: 1.65; min-height: 96px; }
+#th-prompt, #th-system { min-height: 128px; }
+.th-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.theater-dialog :is(fieldset, details, article) { border: 1px solid var(--card-border); border-radius: 16px; margin: 12px 0; padding: 12px 14px; min-width: 0; }
+.theater-dialog :is(legend, summary) { font-size: 13px; font-weight: 600; }
+.theater-dialog summary { cursor: pointer; }
+.th-check { display: flex; gap: 8px; align-items: center; font-size: 14px; margin-block: 10px; }
+.th-check input { accent-color: var(--accent); }
+.th-end { justify-content: flex-end; margin-top: 14px; }
+.th-row { justify-content: space-between; margin: 10px 0; }
+.theater-dialog p { white-space: pre-line; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; margin: 8px 0; }
+.theater-dialog article { background: var(--card-subtle); }
+.theater-dialog article h3 { font-family: Georgia,"Songti SC",serif; font-size: 19px; margin: 5px 0; overflow-wrap: anywhere; }
+.theater-dialog article p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.th-byline,.th-empty,.theater-dialog small { color: var(--text-muted-on-card); font-size: 12px; }
+.th-actions { flex-wrap: wrap; margin-top: 12px; }
+.th-actions :is(button,a) { padding: 5px 10px; }
+.theater-preview { width: min(1000px,96vw); height: 90dvh; max-height: 90dvh; }
+.theater-preview iframe { width: 100%; flex: 1; min-height: 0; border: 0; background: white; }
+@media (max-width:600px) {
+    .theater-dialog { width: calc(100vw - 16px); max-height: 91dvh; border-radius: 19px; }
+    .theater-dialog header { padding: 16px 15px 10px; }
+    .theater-dialog nav, #th-note { margin-inline: 15px; }
+    #th-panel { padding: 8px 15px max(18px, env(safe-area-inset-bottom)); }
+    .theater-dialog :is(input:not([type=checkbox]),select,textarea) { font-size: 16px; }
+    .th-pair { gap: 8px; }
+}
+
+@media (max-width: 420px) {
+    .theater-preview header { gap: 5px; }
+    .theater-preview header h2 { font-size: 18px; }
+    .theater-preview header :is(a,button) { font-size: 12px; padding: 6px 8px; }
+}
+.wb-body { overflow:auto; padding:4px clamp(15px,4vw,24px) 20px; overscroll-behavior:contain; }
+.wb-dialog [role=status]:not(:empty) { padding:0 24px 12px; }
+#wb-bind { border:1px solid var(--card-border); border-radius:14px; padding:12px; margin:12px 0; }
+#wb-bind summary { cursor:pointer; font-weight:600; font-size:14px; }
+.theater-dialog header h2 {
+    font-family: inherit;
+    font-size: 17px;
+    font-weight: 600;
+}
+.theater-dialog article h3 { font-family: inherit; font-size: 15px; font-weight: 600; }
+#th-jobs:not(:empty) { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 5px; margin: 3px 24px 5px; }
+.th-job {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
+    min-width: 0; max-width: 100%;
+    padding: 6px 10px; border: 1px solid var(--card-border); border-radius: 13px;
+    background: var(--card-subtle); font-size: 12px;
+}
+.th-job-label, .th-job-meta { display: flex; align-items: baseline; gap: 5px; min-width: 0; white-space: nowrap; }
+.th-job b { min-width: 0; }
+.th-job small:empty { display: none; }
+.th-job b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-job small { white-space: nowrap; font-size: 11px; }
+.th-job time {
+    background: var(--card-subtle); border-radius: 999px; padding: 2px 8px;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.th-preset-note { display: block; margin-top: 10px; }
+@media (max-width:600px) {
+    #th-jobs:not(:empty) { margin-inline: 15px; }
+}

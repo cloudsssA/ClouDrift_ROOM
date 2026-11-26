@@ -595,7 +595,8 @@
         const btn = document.getElementById('presetSaveAllBtn');
         if (btn) { btn.disabled = true; btn.innerText = '💾 保存中...'; }
         try {
-            const edited = collectEditedPresets();
+            const edited = Object.fromEntries(Object.entries(collectEditedPresets())
+                .filter(([key, value]) => value !== (presetsState.current[key] ?? '')));
             const contextLimit = parseInt(document.getElementById('cfgContextLimit')?.value, 10) || 0;
 
             const [pRes, cRes] = await Promise.all([
@@ -607,7 +608,7 @@
                 fetch(`${API_BASE}/api/config`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ systemPreset: edited.systemPreset, contextLimit })
+                    body: JSON.stringify({ contextLimit })
                 })
             ]);
 

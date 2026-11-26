@@ -27,11 +27,12 @@
     function buildEndpoints() {
         const base = getOriginBase();
         const tok = (document.getElementById('cfgMcpToken')?.value ?? mcpCfg.mcpToken ?? '').trim();
-        const q = tok ? `?token=${encodeURIComponent(tok)}` : '';
+        const role = '?owner=' + encodeURIComponent(mcpCfg.owner || '');
+        const q = role + (tok ? '&token=' + encodeURIComponent(tok) : '');
         return {
             base,
             token: tok,
-            httpUrl: `${base}/mcp`,
+            httpUrl: `${base}/mcp${role}`,
             sseUrl: `${base}/mcp/sse${q}`
         };
     }
@@ -75,8 +76,11 @@
                 <button type="button" class="mini-btn" id="mcpSelfTestBtn" onclick="window.McpUI.selfTest()">⚡ 协议自检</button>
             </div>
             <div style="font-size:11.5px;color:#a8a29e;line-height:1.55;margin-bottom:8px;">
-                已暴露 <strong style="color:#fde68a;">8 项标准 MCP 工具</strong>（读状态 / 读备忘录与记忆投影 / 贴便签 / 发小手机消息 / 批注划线 / 切歌审批 / 隔空逗桌宠点歌），支持 Streamable HTTP、SSE 与本地 Stdio 三协议接入。
+                配置固定到当前房间角色。选好已有角色卡，或在下方切换到独立外部身份，再复制该角色的配置。已暴露 <strong style="color:#fde68a;">角色专属 MCP 工具</strong>（读状态 / 读备忘录与记忆投影 / 贴便签 / 发小手机消息 / 批注划线 / 切歌审批 / 隔空逗桌宠点歌），支持 Streamable HTTP、SSE 与本地 Stdio 三协议接入。
             </div>
+            <div class="form-group"><label>无本地卡的外部角色</label>
+                <input id="externalRoleName" placeholder="固定身份标识，例如 AstrBot / K">
+                <button type="button" class="mini-btn" id="useExternalRole">切换到此独立身份</button></div>
             <div class="form-group" style="margin-bottom:8px;">
                 <label>MCP 访问令牌 Token（本地可留空；若暴露公网建议填一串密码防蹭连）</label>
                 <div class="pwd-wrap">
@@ -110,6 +114,16 @@
 
         if (modeAnchor && modeAnchor.parentNode) {
             modeAnchor.parentNode.insertBefore(box, modeAnchor.nextSibling);
+            box.querySelector('#useExternalRole').onclick = async () => {
+                const identity=box.querySelector('#externalRoleName').value.trim();
+                if (!identity) return box.querySelector('#externalRoleName').focus();
+                if (!confirm('切换房间到外部角色「'+identity+'」并启用 MCP 模式？')) return;
+                try {
+                    const response=await fetch(API_BASE+'/api/mcp/external-identity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identity})});
+                    if (!response.ok) throw Error('身份切换失败');
+                    location.reload();
+                } catch(err) { box.querySelector('#mcpBridgeStatus').textContent=err.message; }
+            };
         }
     }
 
@@ -127,7 +141,7 @@
         const st = document.getElementById('mcpBridgeStatus');
         if (tokInp) tokInp.value = mcpCfg.mcpToken || '';
         if (liveChk) liveChk.checked = mcpCfg.mcpLiveSync !== false;
-        if (st) st.innerText = '';
+        if (st) st.innerText = '连接绑定角色：' + (mcpCfg.ownerName || '读取中');
         refreshUrls();
     }
 
@@ -194,9 +208,9 @@
                 mcpServers: {
                     'study-room': {
                         command: 'node',
-                        args: ['server/mcp-stdio.js'],
+                        args: ['mcp-stdio.js'],
                         env: {
-                            STUDY_ROOM_URL: ep.base,
+                            STUDY_ROOM_URL: ep.base, STUDY_ROOM_OWNER:mcpCfg.owner,
                             ...(ep.token ? { STUDY_ROOM_MCP_TOKEN: ep.token } : {})
                         }
                     }
@@ -218,7 +232,7 @@
             const headers = { 'Content-Type': 'application/json' };
             if (ep.token) headers['Authorization'] = `Bearer ${ep.token}`;
 
-            const res = await fetch(`${API_BASE}/mcp`, {
+            const res = await fetch(ep.httpUrl, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
@@ -368,7 +382,7 @@
             const orig = window.openSettingsModal;
             window.openSettingsModal = function () {
                 orig.apply(this, arguments);
-                fillMcpForm();
+                loadMcpConfig().then(fillMcpForm);
             };
         }
         if (typeof window.saveSettingsPanel === 'function') {

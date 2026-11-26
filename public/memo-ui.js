@@ -276,6 +276,7 @@
                             <button type="button" class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="window.MemoUI.resetPrompt()">🔄 恢复出厂 Prompt</button>
                         </div>
                         <div class="memo-field">
+                            <small style="display:block;margin:4px 0 8px;opacity:.75;">📜 与配置里的预设殿堂共用，切换预设套装也会一起更新。</small>
                             <textarea id="cfgMemoPrompt" style="min-height:160px;line-height:1.55;"></textarea>
                         </div>
                     </div>
@@ -373,7 +374,8 @@
         if (mInp) mInp.placeholder = `留空复用主模型（当前：${mainModel || '默认'}）`;
         setVal('cfgMemoBaseUrl', c.memoBaseURL || '');
         setVal('cfgMemoApiKey', c.memoApiKey || '');
-        setVal('cfgMemoPrompt', c.memoPrompt || memoData.defaultPrompt || '');
+        loadedMemoPrompt = c.memoPrompt || memoData.defaultPrompt || '';
+        setVal('cfgMemoPrompt', loadedMemoPrompt);
         clampDropInput();
     }
 
@@ -394,6 +396,7 @@
         }
     }
 
+    let loadedMemoPrompt = '';
     async function saveConfig() {
         clampDropInput();
         const st = document.getElementById('memoCfgStatus');
@@ -415,6 +418,7 @@
             memoPrompt: document.getElementById('cfgMemoPrompt')?.value.trim() || ''
         };
 
+        if (payload.memoPrompt === loadedMemoPrompt.trim()) delete payload.memoPrompt;
         try {
             const res = await fetch(`${API_BASE}/api/memo/config`, {
                 method: 'POST',

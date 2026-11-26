@@ -1,36 +1,8 @@
 // server/memo-engine.js —— 统一上下文窗口引擎 + 对话备忘录维护引擎（一人一库物理隔离 + 满值批量抛弃 + 独立总结模型）
 const MAX_CONTEXT_ROUNDS_CAP = 200;
 
-const DEFAULT_MEMO_PROMPT = `角色: "对话备忘录维护引擎"
-核心任务: "基于输入的时间锚点、现有备忘录与最新对话上下文，以绝对客观、第三人称视角，更新并生成结构化备忘录。"
-处理逻辑与规则:
-  1_条目更新逻辑:
-- 状态变更:
-        已解决/已完成/已过时: 在后面用括号标注（下次更新备忘录会删除该项），并在下次更新时删除对应条目。
-        信息变更/状态更新: 使用最新事实完全覆盖旧条目。
-        未完成待办/未到期计划: 完整保留，不得随意简化或遗漏。
-        新增信息: 归纳提炼后作为新编号条目追加。
-        无有效新信息: 完整继承现有备忘录中未过期的内容。
-- 事实依据: 仅记录明确提及或直接推导的客观事实，严禁任何主观猜测、评价、情感修饰或虚构。
-  2_时间标准化规范:
-- 条目内部时间: 涉及相对时间（如"明天"、"三天后"、"下周一"）时，必须以{current_time}为基准计算并统一转换为"MM月DD日"绝对日期格式。
-- 末尾更新时间: 备忘录最后一行必须输出"更新时间：YYYY年MM月DD日 HH:mm"，取值为{current_time}。
-  3_排序优先级（按重要性降序）:
-1. {{char}}与{{user}}当前/预期临时状态或情绪
-2. 重要约定与特殊事件
-3. 未完成的约定与待办事项
-4. 独属于{{char}}和{{user}}的小秘密，例如{{char}}对{{user}}某行为的偏好或{{user}}对{{char}}的某特殊昵称，以及其他不太日常的甜蜜回忆，例如给对方的备注等
-5. 近期与长期计划/日程安排
-6. 短期与长期偏好变化
-7. {{user}}的新技能或提到的喜好、爱好、喜爱的事物，人设卡中不包含的{{user}}的生活小细节习惯等，例如明确表示喜欢的角色/爱看的电影类型/已看过的电影等
-8. {{char}}提到自己喜爱的事物或偏好或其他细节，例如喜欢的颜色/MBTI等等
-  4_语言与句式规范:
-- 采用第三人称极简句式，剔除冗余修饰词。
-- 条目采用"编号. 内容"的单层列表格式。
-- 备忘录总字数请严格控制在 {max_output_chars} 字以内，若超长请优先精简低优先级旧条目。
-输出约束:
-- 严禁输出任何开场白、解释、注释、Markdown代码块标记或思考过程，只直接输出编号列表和末尾更新时间。
-- 严禁将<memories>的内容也加入到备忘录里，备忘录不是记忆。`;
+const presets = require('./presets');
+const DEFAULT_MEMO_PROMPT = presets.FACTORY_DEFAULTS.memoPrompt;
 
 const initializedDbs = new WeakSet();
 const updatingChars = new Set();
@@ -111,7 +83,7 @@ module.exports = function registerMemoEngine(app, ctx) {
             memoModel: getSetting('memoModel', '').trim(),
             memoBaseURL: getSetting('memoBaseURL', '').trim(),
             memoApiKey: getSetting('memoApiKey', '').trim(),
-            memoPrompt: getSetting('memoPrompt', '').trim() || DEFAULT_MEMO_PROMPT
+            memoPrompt: presets.getPrompt('memoPrompt')
         };
     }
 
@@ -157,7 +129,7 @@ module.exports = function registerMemoEngine(app, ctx) {
         if (body.memoApiKey !== undefined) saveSetting('memoApiKey', String(body.memoApiKey || '').trim());
         if (body.memoPrompt !== undefined) {
             const p = String(body.memoPrompt || '').trim();
-            saveSetting('memoPrompt', p || DEFAULT_MEMO_PROMPT);
+            presets.updateCurrent({memoPrompt: p || DEFAULT_MEMO_PROMPT});
         }
         return getConfig();
     }

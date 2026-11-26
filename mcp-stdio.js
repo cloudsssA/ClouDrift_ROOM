@@ -2,7 +2,7 @@
 // server/mcp-stdio.js —— 零依赖 MCP Stdio 桥接器（让 Claude Desktop / Cursor / 本地命令行客户端直连正在运行的自习室）
 const readline = require('readline');
 
-const TARGET_URL = (process.env.STUDY_ROOM_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '') + '/mcp';
+const TARGET_URL = (process.env.STUDY_ROOM_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '') + '/mcp?owner=' + encodeURIComponent(process.env.STUDY_ROOM_OWNER || '');
 const MCP_TOKEN = (process.env.STUDY_ROOM_MCP_TOKEN || '').trim();
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });

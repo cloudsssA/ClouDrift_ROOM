@@ -313,7 +313,7 @@ module.exports = function registerChatProRoutes(app, ctx) {
         ensureTurnSchema(memDb);
 
         const openai = createAIClient();
-        const { promptText, userName, charName } = getPersonasBlock(charKey);
+        const { promptText, userName, charName } = getPersonasBlock(charKey, items.map(it => it.content || '').join('\n'));
         const proCfg = getProSettings();
         const voiceEnabled = getBoolSetting('voiceEnabled', false);
         const webSearchActive = tavily.isSearchReady(ctx);
@@ -900,6 +900,10 @@ module.exports = function registerChatProRoutes(app, ctx) {
 
     // --- 接口 H：💌 角色主动发起通讯消息 ---
     app.post('/api/chat/proactive', async (req, res) => {
+        if (getSetting('mode')==='mcp' && !getBoolSetting('soloMode',false)) {
+            const eventId=require('./mcp-owner').enqueue(ctx,Math.max(1,Number(req.body?.idleMinutes)||1));
+            return res.json({success:true,pending:true,eventId});
+        }
         if (getBoolSetting('soloMode', false) || getSetting('mode', 'standalone') !== 'standalone') {
             return res.json({ success: true, skipped: true });
         }

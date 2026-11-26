@@ -15,6 +15,7 @@ const mediaStore = require('./media-store');
 mediaStore.migrateExistingBase64({ db, vault });
 
 const app = express();
+require('./theater-routes').mountReader(app, db);
 app.use(cors());
 
 // 全站开启 Gzip 压缩（自动放过 SSE 流式推送，绝不卡顿）
@@ -35,6 +36,16 @@ const homeApi = registerHomeRoutes(app, {
     dataDir: path.join(__dirname, 'data'),
     mediaStore
 });
+if (!getSetting('combinedPromptsMigrated')) {
+    const old = JSON.parse(db.prepare('SELECT value FROM theater_config WHERE id=1').get()?.value || '{}');
+    const patch = {};
+    if (old.system) patch.theaterSystem = old.system;
+    if (old.style) patch.theaterStyle = old.style;
+    if (getSetting('memoPrompt')) patch.memoPrompt = getSetting('memoPrompt');
+    if (Object.keys(patch).length) presets.updateCurrent(patch);
+    saveSetting('combinedPromptsMigrated','1');
+}
+const worldbooks = require('./worldbooks')(app, db);
 const DEFAULT_INK_COLOR = '#1c1917';
 
 function saveSetting(key, value) {
@@ -218,7 +229,7 @@ function wipeCharacterMemory(charKey, { clearChat = true, clearNotes = true, hid
         db.prepare("UPDATE widgets SET visible_to_ai = 0, ai_memo = ''").run();
     }
     try {
-        db.prepare("DELETE FROM pending_events WHERE status = 'waiting'").run();
+        db.prepare("DELETE FROM pending_events WHERE status='waiting' AND CASE WHEN json_valid(payload) THEN json_extract(payload,'$.charKey') END=?").run(charKey);
     } catch {}
 
     console.log(`🧹 已彻底洗白独立库 [${vault.getMemoryDbFilename(charKey)}] | 记忆:${memDel}条, 聊天:${chatDel}条, 便签:${notesDel}条, 备忘录与相框<memo>已置空`);
@@ -271,7 +282,7 @@ function getUnifiedMemoryMessages(charKey = getActiveCharKey(), options = {}) {
 }
 
 // --- 🎭 核心 Prompt 组装（全量热读取 presets.js + 方案 A 角色语音覆写 + 全站统一注入动态备忘录） ---
-function getPersonasBlock(charKey = getActiveCharKey()) {
+function getPersonasBlock(charKey = getActiveCharKey(), currentText = '') {
     const charName = getSetting('charName', '连线搭子');
     const persona = getSetting('persona', '你是一个嘴硬心软、有点傲娇但暗地里很在意对方的线上自习室陪伴者。');
     const userName = getSetting('userName', '我');
@@ -305,6 +316,12 @@ function getPersonasBlock(charKey = getActiveCharKey()) {
     const voiceSection = voiceEnabled ? `\n\n${renderedVoicePrompt}` : '';
     const memoSection = memoEngine.getMemoPromptBlock(charKey);
 
+    const recent = vault.hasMemoryDb(charKey) ? vault.getMemoryDb(charKey)
+        .prepare('SELECT content FROM chat_messages ORDER BY id DESC LIMIT 100').all().map(row => {
+            try { const media = JSON.parse(row.content); if (media?.__mm) return media.text || ''; } catch {}
+            return row.content;
+        }) : [];
+    const lore = renderTemplateVars(worldbooks.match(worldbooks.forRole(charKey), currentText, recent), charName, userName);
     return {
         charName,
         userName,
@@ -319,7 +336,7 @@ ${userLines.join('\n')}
 【线上陪伴自习室互动规则】
 1. 你们目前不在同一个物理房间，而是通过「线上陪伴自习室」跨屏连线：能看到彼此同步的专注倒计时、共享留声机歌单、共同阅读的书页划线，以及通过自习室的「通讯」和书桌便利贴互动。请保持自然真实的线上陪伴感，不要假装伸手拍对方肩膀或坐在实体旁边。
 2. 对话历史按时间顺序呈现，请自然承接上下文，并**精准回应最后一条刚刚发生的最新消息/动作**。
-3. 直接用真人自然口吻回复正文，绝对不要在开头或句中输出时间戳（如 [11-21 14:20]）、角色名冒号前缀，也不要输出“（便利贴）”“（页边批注）”之类的系统标签。${memoSection}`
+3. 直接用真人自然口吻回复正文，绝对不要在开头或句中输出时间戳（如 [11-21 14:20]）、角色名冒号前缀，也不要输出“（便利贴）”“（页边批注）”之类的系统标签。${memoSection}\n${lore}`
     };
 }
 
@@ -883,7 +900,7 @@ app.post('/api/focus/decision', async (req, res) => {
     const mode = getSetting('mode', 'standalone');
     if (mode === 'mcp') {
         db.prepare('INSERT INTO pending_events (event_type, payload) VALUES (?, ?)')
-            .run('focus_decision', JSON.stringify({ decision, elapsedMinutes, remainingMinutes, totalMinutes }));
+            .run('focus_decision', JSON.stringify({ charKey, decision, elapsedMinutes, remainingMinutes, totalMinutes }));
         return res.json({ success: true, pending: true });
     }
 
@@ -1803,6 +1820,12 @@ app.post('/api/timer/state', (req, res) => {
 });
 
 // --- 接口 10：MCP 外部框架桥接 ---
+const mcpOwner = require('./mcp-owner');
+app.use(['/api/mcp/context','/api/mcp/resolve-music','/api/mcp/reply-highlight','/api/mcp/post-note','/api/mcp/reply-chat'], (req,res,next) => {
+    const token=getSetting('mcpToken','').trim();
+    if (token && req.headers.authorization!=='Bearer '+token && req.query.token!==token) return res.sendStatus(401);
+    if (mcpOwner.guard({getSetting,saveSetting,getActiveCharKey},req,res,req.query.owner || req.headers['x-cloudrift-owner'])) next();
+});
 app.get('/api/mcp/context', (req, res) => {
     const charKey = getActiveCharKey();
     const hasMem = vault.hasMemoryDb(charKey);
@@ -1812,7 +1835,7 @@ app.get('/api/mcp/context', (req, res) => {
         activeCharKey: charKey,
         memoryFile: vault.getMemoryDbFilename(charKey),
         contextText: getRoomContextSummary({ charKey }),
-        pendingEvents: db.prepare("SELECT * FROM pending_events WHERE status = 'waiting' ORDER BY id ASC").all(),
+        pendingEvents: db.prepare("SELECT * FROM pending_events WHERE status = 'waiting' AND "+mcpOwner.ownerSQL+"=? ORDER BY id ASC").all(charKey),
         recentNotes: memDb ? memDb.prepare("SELECT * FROM notes ORDER BY id DESC LIMIT 5").all() : [],
         recentChat: memDb ? memDb.prepare("SELECT * FROM chat_messages ORDER BY id DESC LIMIT 10").all().reverse() : [],
         recentMemory: getUnifiedMemoryMessages(charKey, { mutateWindow: false })
@@ -1826,7 +1849,7 @@ app.post('/api/mcp/resolve-music', (req, res) => {
     const cleanReason = cleanAIOutput(reason || '');
     const resultObj = { approved: Boolean(approved), reason: cleanReason };
     if (eventId) {
-        db.prepare("UPDATE pending_events SET status = 'resolved', result = ? WHERE id = ?").run(JSON.stringify(resultObj), eventId);
+        if (!db.prepare("UPDATE pending_events SET status='resolved',result=? WHERE status='waiting' AND event_type='music_request' AND id=? AND "+mcpOwner.ownerSQL+"=?").run(JSON.stringify(resultObj),eventId,charKey).changes) return res.sendStatus(409);
     }
     pushMemory('music', 'assistant', resultObj.reason, charKey);
     res.json({ success: true, ...resultObj });
@@ -1836,7 +1859,7 @@ app.post('/api/mcp/reply-highlight', (req, res) => {
     const { highlightId, comment } = req.body;
     const charKey = getActiveCharKey();
     const cleanComment = cleanAIOutput(comment || '');
-    booksDb.prepare('UPDATE highlights SET ai_comment = ? WHERE id = ?').run(cleanComment, highlightId);
+    if (!booksDb.prepare('UPDATE highlights SET ai_comment = ? WHERE id = ? AND char_key=?').run(cleanComment, highlightId,charKey).changes) return res.sendStatus(404);
     pushMemory('highlight', 'assistant', `（页边批注·尚未解锁）${cleanComment}`, charKey);
     res.json({ success: true });
 });
@@ -1904,6 +1927,7 @@ app.delete('/api/presets/profiles/:name', (req, res) => {
     res.json({ success: true, profiles: presets.listProfiles() });
 });
 
+require('./theater-routes')(app, { worldbooks, db, vault, getSetting, getActiveCharKey, getModelName, createAIClient, renderTemplateVars });
 require('./chat-pro-routes')(app, {
     db, tts, presets, vault, memoEngine, mediaStore,
     getSetting, saveSetting, getBoolSetting, getActiveCharKey,
@@ -1922,5 +1946,5 @@ require('./music-pro-routes')(app, {
 apiEngine.registerRoutes(app);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 线上陪伴读书室完全体后端已就位: http://localhost:${PORT} (已开放局域网/云端访问)`);
+    console.log(`🚀 ClouDrift 后端已就绪: http://localhost:${PORT} (已开放局域网/云端访问)`);
 });

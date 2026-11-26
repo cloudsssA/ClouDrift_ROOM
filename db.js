@@ -208,4 +208,16 @@ try {
 
 console.log(`🚀 数据库群就绪:\n  - 核心库: ${coreDbPath}\n  - 书架库: ${booksDbPath}\n  - 歌单库: ${musicDbPath}`);
 
+coreDb.exec(`
+  CREATE TABLE IF NOT EXISTS theater_works (
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, char_key TEXT NOT NULL, char_name TEXT NOT NULL,
+    created INTEGER NOT NULL, books TEXT NOT NULL, summary TEXT NOT NULL, starred INTEGER DEFAULT 0,
+    filename TEXT NOT NULL UNIQUE
+  );
+  CREATE TABLE IF NOT EXISTS theater_templates (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, prompt TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS theater_config (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS theater_books (id INTEGER PRIMARY KEY, scope TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS theater_users (char_key TEXT PRIMARY KEY, user_id INTEGER NOT NULL);
+`);
+
 module.exports = { db: coreDb, coreDb, booksDb, musicDb };
