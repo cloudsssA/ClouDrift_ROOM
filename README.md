@@ -8,6 +8,7 @@
 ![Local-First](https://img.shields.io/badge/Local--First-Node.js%20%2B%20SQLite-10b981?style=flat-square)
 ![MCP](https://img.shields.io/badge/MCP-HTTP%20%7C%20SSE%20%7C%20Stdio-a855f7?style=flat-square)
 ![Author](https://img.shields.io/badge/Author-三云%20%7C%20cloudsssA-38bdf8?style=flat-square)
+[![M8ven Score](https://m8ven.ai/badge/mcp/cloudsssa-cloudrift-room-h6yadh?v=7139dd937cf7cb737ea4fdaef5af5d17)](https://m8ven.ai/mcp/cloudsssa-cloudrift-room-h6yadh?s=readme)
 > ✨ **最新动态 (v1.1.1)**：重磅上线 **🏡 2D 像素家园 & 痛墙/透明立牌 DIY**、**🎨 极简单行顶栏 & 独立「美化」面板（横竖双壁纸 2.5K 自适配 + 聊天背景自由拖放缩放）**、**☁️ 全站 SSOT 双端实时云同步（桌宠/天气/番茄钟/战绩/相框/角色隔空联动）** 与多项防重/防打扰深度精修！详细改动请移步 👉 [更新日志 CHANGELOG.md](./CHANGELOG.md)
 
 
