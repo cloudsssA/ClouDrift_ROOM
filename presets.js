@@ -159,8 +159,7 @@ function getAllCurrent() {
     }
 }
 
-function getPrompt(key, vars = {}) {
-    const all = getAllCurrent();
+function getPrompt(key, vars = {}, all = getAllCurrent()) {
     let tpl = (all[key] && String(all[key]).trim()) ? all[key] : (FACTORY_DEFAULTS[key] || '');
     for (const [vk, vv] of Object.entries(vars)) {
         const replacement = String(vv ?? '');
@@ -217,13 +216,16 @@ function saveProfile(name, data = null) {
     return safe;
 }
 
-function applyProfile(name) {
+function readProfile(name) {
     ensureFiles(false);
     const safe = sanitizeName(name);
     const file = path.join(PROFILES_DIR, `${safe}.json`);
     if (!fs.existsSync(file)) throw new Error('未找到该预设套装');
-    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    return updateCurrent(data);
+    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+}
+
+function applyProfile(name) {
+    return updateCurrent(readProfile(name));
 }
 
 function deleteProfile(name) {
@@ -245,6 +247,6 @@ module.exports = {
     resetPrompt,
     listProfiles,
     saveProfile,
-    applyProfile,
+    readProfile, applyProfile,
     deleteProfile
 };

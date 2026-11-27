@@ -250,15 +250,15 @@ module.exports = function registerChatProRoutes(app, ctx) {
     });
 
     function getChatTheme() {
-        const raw = getSetting('chatThemeJson', '').trim();
-        if (!raw) return { ...DEFAULT_CHAT_THEME };
+        const raw = getSetting('chatThemeJson_' + getActiveCharKey(), getSetting('chatThemeJson', '')).trim();
+        if (!raw) return {...DEFAULT_CHAT_THEME, ...JSON.parse(getSetting('chatBubbleColors','{}'))};
         try {
             const parsed = { ...DEFAULT_CHAT_THEME, ...JSON.parse(raw) };
             if (parsed.chatBgImage && parsed.chatBgImage.startsWith('data:')) {
                 parsed.chatBgImage = persistMedia(parsed.chatBgImage, 'chat_bg');
-                saveSetting('chatThemeJson', JSON.stringify(parsed));
+                saveSetting('chatThemeJson_' + getActiveCharKey(), JSON.stringify(parsed));
             }
-            return parsed;
+            return {...parsed, ...JSON.parse(getSetting('chatBubbleColors','{}'))};
         } catch {
             return { ...DEFAULT_CHAT_THEME };
         }
@@ -278,7 +278,8 @@ module.exports = function registerChatProRoutes(app, ctx) {
             chatBgX: patch.chatBgX !== undefined ? Math.max(-320, Math.min(320, Math.round(Number(patch.chatBgX) || 0))) : (cur.chatBgX ?? 0),
             chatBgY: patch.chatBgY !== undefined ? Math.max(-360, Math.min(360, Math.round(Number(patch.chatBgY) || 0))) : (cur.chatBgY ?? 0)
         };
-        saveSetting('chatThemeJson', JSON.stringify(next));
+        saveSetting('chatBubbleColors', JSON.stringify({userBubbleBg:next.userBubbleBg, aiBubbleBg:next.aiBubbleBg}));
+        saveSetting('chatThemeJson_' + getActiveCharKey(), JSON.stringify(next));
         return next;
     }
 
@@ -319,19 +320,20 @@ module.exports = function registerChatProRoutes(app, ctx) {
         const webSearchActive = tavily.isSearchReady(ctx);
 
         const splitSection = proCfg.chatSplitEnabled
-            ? `\n\n${presets.getPrompt('chatSplitPrompt', { char: charName, user: userName })}`
+            ? `\n\n${ctx.contactPrompt('chatSplitPrompt', { char: charName, user: userName })}`
             : '';
         const searchSection = webSearchActive
-            ? `\n\n${presets.getPrompt('webSearchPrompt', { char: charName, user: userName })}`
+            ? `\n\n${ctx.contactPrompt('webSearchPrompt', { char: charName, user: userName })}`
             : '';
 
         const playlistTitles = getAvailablePlaylistTitles();
-        const actionRule = presets.getPrompt('roomActionPrompt', { char: charName, user: userName }).trim();
-        const actionSection = actionRule
+        const actionRule = ctx.contactPrompt('roomActionPrompt', { char: charName, user: userName }).trim();
+        const inRoom = charKey === ctx.roomKey();
+        const actionSection = inRoom && actionRule
             ? `\n\n${actionRule}\n- 留声机可用歌单：${playlistTitles.map(t => `《${t}》`).join('、')}`
             : '';
 
-        const roomContext = getRoomContextSummary({ charKey, ...roomExtra });
+        const roomContext = inRoom ? getRoomContextSummary({ charKey, ...roomExtra }) : '当前是与用户的私人通讯。你没有参加这次共读。';
         const history = getUnifiedMemoryMessages(charKey);
         const nowTs = formatLocalTimestamp();
 
@@ -388,7 +390,7 @@ module.exports = function registerChatProRoutes(app, ctx) {
         });
 
         const extractedMemo = hasDirectMedia ? extractMemoTag(rawReply) : '';
-        const roomActions = extractRoomActions(rawReply);
+        const roomActions = inRoom ? extractRoomActions(rawReply) : [];
         const segments = parseReplyIntoSegments(rawReply, {
             charName,
             splitByDollar: proCfg.chatSplitEnabled,
@@ -562,7 +564,7 @@ module.exports = function registerChatProRoutes(app, ctx) {
             db.prepare('INSERT INTO pending_events (event_type, payload) VALUES (?, ?)')
                 .run('chat_message', JSON.stringify({
                     messageId: userMsgs[userMsgs.length - 1]?.id,
-                    charKey, turnId, content: merged,
+                    charKey, turnId, userProfile:ctx.userScopes.context(charKey), content: merged,
                     hasImage: items.some(i => Boolean(i.imageData)),
                     hasAudio: items.some(i => Boolean(i.audioData))
                 }));

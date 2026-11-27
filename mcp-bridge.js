@@ -190,6 +190,8 @@ module.exports = function registerMcpBridge(app, ctx) {
 
     // 执行 MCP 工具调用
     function executeToolCall(name, args = {}) {
+        if (getActiveCharKey() !== ctx.roomKey() && !['get_pending_events','send_study_chat','get_study_room_status','get_character_memo_and_memory'].includes(name))
+            throw Error('该操作仅对当前共读角色开放');
         const charKey = getActiveCharKey();
         const charName = getSetting('charName', '连线搭子');
         const userName = getSetting('userName', '我');
@@ -203,6 +205,7 @@ module.exports = function registerMcpBridge(app, ctx) {
         }
         if (name === 'get_study_room_status') {
             const pendingCount = db.prepare("SELECT COUNT(*) as cnt FROM pending_events WHERE status = 'waiting' AND "+owner.ownerSQL+"=?").get(charKey)?.cnt || 0;
+            if (charKey !== ctx.roomKey()) return {content:[{type:'text',text:`通讯好友：${charName}（${charKey}），待处理事件 ${pendingCount} 条。`}]};
             const summary = getRoomContextSummary({ charKey });
             const text = `${summary}\n- 当前连线角色：${charName}（独立库：${vault.getMemoryDbFilename(charKey)}，共 ${getMemoryCount(charKey)} 条记忆）\n- 近期待办清单：${readTodosText()}\n- 留声机可用歌单：${readPlaylistNames().map(t => `《${t}》`).join('、')}\n- 待处理挂起事件：${pendingCount} 条`;
             return { content: [{ type: 'text', text }] };
@@ -228,7 +231,7 @@ module.exports = function registerMcpBridge(app, ctx) {
             const memBlock = lines.length
                 ? `【近期自习室互动投影（最新 ${lines.length} 条）】\n${lines.join('\n')}`
                 : '【近期自习室互动投影】暂无记录';
-            return { content: [{ type: 'text', text: `${memoBlock}${memBlock}` }] };
+            return { content: [{ type: 'text', text: `用户设定：${JSON.stringify(ctx.userScopes.context(charKey))}\n${memoBlock}${memBlock}` }] };
         }
 
         if (name === 'get_pending_events') {
@@ -444,16 +447,17 @@ module.exports = function registerMcpBridge(app, ctx) {
     // 1. Streamable HTTP MCP 入口（推荐：AstrBot 新版 / Cherry Studio / 通用客户端）
     app.post('/mcp', (req, res) => {
         if (!checkMcpAuth(req, res)) return;
-        if (!owner.guard(ctx, req, res, req.query.owner || req.headers['x-cloudrift-owner'])) return;
-        const body = req.body;
-        if (Array.isArray(body)) {
-            const responses = body.map(item => handleJsonRpc(item)).filter(Boolean);
-            if (!responses.length) return res.status(202).end();
-            return res.json(responses);
-        }
-        const reply = handleJsonRpc(body);
-        if (!reply) return res.status(202).end();
-        res.json(reply);
+        return ctx.withBoundOwner(req, res, req.query.owner || req.headers['x-cloudrift-owner'], () => {
+            const body = req.body;
+            if (Array.isArray(body)) {
+                const responses = body.map(item => handleJsonRpc(item)).filter(Boolean);
+                if (!responses.length) return res.status(202).end();
+                return res.json(responses);
+            }
+            const reply = handleJsonRpc(body);
+            if (!reply) return res.status(202).end();
+            res.json(reply);
+        });
     });
 
     app.get('/mcp', (req, res) => {
@@ -471,26 +475,27 @@ module.exports = function registerMcpBridge(app, ctx) {
     // 2. Legacy SSE MCP 入口（兼容所有支持 SSE 的 AstrBot / Cherry Studio / 客户端）
     app.get('/mcp/sse', (req, res) => {
         if (!checkMcpAuth(req, res)) return;
-        if (!owner.guard(ctx, req, res, req.query.owner || req.headers['x-cloudrift-owner'])) return;
-        const sessionId = crypto.randomBytes(8).toString('hex');
-        const tokenParam = req.query?.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
+        return ctx.withBoundOwner(req, res, req.query.owner || req.headers['x-cloudrift-owner'], () => {
+            const sessionId = crypto.randomBytes(8).toString('hex');
+            const tokenParam = req.query?.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
-        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.flushHeaders?.();
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.flushHeaders?.();
 
-        res.write(`event: endpoint\ndata: /mcp/messages?sessionId=${sessionId}${tokenParam}\n\n`);
+            res.write(`event: endpoint\ndata: /mcp/messages?sessionId=${sessionId}${tokenParam}\n\n`);
 
-        const heartbeat = setInterval(() => {
-            try { res.write(': ping\n\n'); } catch {}
-        }, 25000);
+            const heartbeat = setInterval(() => {
+                try { res.write(': ping\n\n'); } catch {}
+            }, 25000);
 
-        sseSessions.set(sessionId, { res, heartbeat, owner:owner.binding(ctx) });
-        req.on('close', () => {
-            clearInterval(heartbeat);
-            sseSessions.delete(sessionId);
+            sseSessions.set(sessionId, { res, heartbeat, owner:owner.binding(ctx) });
+            req.on('close', () => {
+                clearInterval(heartbeat);
+                sseSessions.delete(sessionId);
+            });
         });
     });
 
@@ -498,17 +503,18 @@ module.exports = function registerMcpBridge(app, ctx) {
         if (!checkMcpAuth(req, res)) return;
         const sessionId = String(req.query?.sessionId || '').trim();
         const session = sseSessions.get(sessionId);
-        if (!owner.guard(ctx, req, res, session?.owner)) return;
-        const reply = handleJsonRpc(req.body);
+        return ctx.withBoundOwner(req, res, session?.owner, () => {
+            const reply = handleJsonRpc(req.body);
 
-        if (session && reply) {
-            try {
-                session.res.write(`event: message\ndata: ${JSON.stringify(reply)}\n\n`);
-            } catch {}
-            return res.status(202).json({ accepted: true });
-        }
-        if (!reply) return res.status(202).end();
-        res.json(reply);
+            if (session && reply) {
+                try {
+                    session.res.write(`event: message\ndata: ${JSON.stringify(reply)}\n\n`);
+                } catch {}
+                return res.status(202).json({ accepted: true });
+            }
+            if (!reply) return res.status(202).end();
+            res.json(reply);
+        });
     });
 
     // 3. 前端管理界面配套接口：读写 MCP 鉴权 Token & 实时监听开关 + 前端轮询拉取外部推送！
@@ -519,6 +525,7 @@ module.exports = function registerMcpBridge(app, ctx) {
         db.transaction(() => {
             saveSetting('activeCharKey',key);
             saveSetting('charName',identity);
+            saveSetting('contactName_' + key,identity);
             saveSetting('charAvatar','');
             saveSetting('persona','');
             saveSetting('mode','mcp');

@@ -8,12 +8,15 @@ tts.initVoiceSchema(db);
 const presets = require('./presets');
 const vault = require('./vault');
 vault.migrateFromCoreDb(db);
+const userScopes = require('./user-scopes')(vault.usersDb, rawSetting);
+
 const path = require('path');
 
 const compression = require('compression');
 const mediaStore = require('./media-store');
 mediaStore.migrateExistingBase64({ db, vault });
 
+const contactScope = new (require('node:async_hooks').AsyncLocalStorage)();
 const app = express();
 require('./theater-routes').mountReader(app, db);
 app.use(cors());
@@ -54,6 +57,12 @@ function saveSetting(key, value) {
     }
 }
 function getSetting(key, fallback = '') {
+    const scoped = contactScope.getStore();
+    if (scoped && Object.hasOwn(scoped, key)) return scoped[key] || fallback;
+    if (Object.hasOwn(userScopes.fields,key)) return userScopes.setting(getActiveCharKey(),key,fallback);
+    return rawSetting(key,fallback);
+}
+function rawSetting(key, fallback = '') {
     const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
     return row ? row.value : fallback;
 }
@@ -291,7 +300,7 @@ function getPersonasBlock(charKey = getActiveCharKey(), currentText = '') {
     const userRelation = getSetting('userRelation', '').trim();
     const charCallUser = getSetting('charCallUser', '').trim();
 
-    const renderedPreset = presets.getPrompt('systemPreset', { char: charName, user: userName });
+    const renderedPreset = contactPrompt('systemPreset', { char: charName, user: userName });
     const renderedPersona = renderTemplateVars(persona, charName, userName);
     const renderedUserPersona = renderTemplateVars(userPersona, charName, userName).trim();
     const renderedRelation = renderTemplateVars(userRelation, charName, userName).trim();
@@ -312,7 +321,7 @@ function getPersonasBlock(charKey = getActiveCharKey(), currentText = '') {
     const charVoiceOverride = sanitizeCharVoiceOverride(getSetting('voicePrompt', ''));
     const renderedVoicePrompt = charVoiceOverride
         ? renderTemplateVars(charVoiceOverride, charName, userName)
-        : presets.getPrompt('voicePrompt', { char: charName, user: userName });
+        : contactPrompt('voicePrompt', { char: charName, user: userName });
     const voiceSection = voiceEnabled ? `\n\n${renderedVoicePrompt}` : '';
     const memoSection = memoEngine.getMemoPromptBlock(charKey);
 
@@ -448,9 +457,41 @@ async function generateHighlightAIComment({ highlightId, bookId, bookTitleFallba
     return aiComment;
 }
 
+const contacts = require('./contacts')(app, vault, getActiveCharKey, getSetting, db, userScopes);
+const contactName = contacts.name;
+function contactPrompt(key, vars) {
+    return presets.getPrompt(key, vars, contactScope.getStore()?.prompts);
+}
+function withContact(key, next) {
+    const profile = {...contacts.profile(key), ...userScopes.resolve(key)};
+    if (key !== getActiveCharKey() && profile.presetProfile) {
+        try { profile.prompts = presets.readProfile(profile.presetProfile); } catch {}
+    }
+    return contactScope.run(profile, next);
+}
+function withBoundOwner(req, res, token, next) {
+    const row = typeof token === 'string' && token && db.prepare(
+        "SELECT substr(key,10) AS owner FROM settings WHERE key GLOB 'mcpOwner_*' AND value=?"
+    ).get(token);
+    if (!row) return res.status(409).json({error:{code:-32003,message:'MCP 身份绑定无效'}});
+    req.remoteContact = row.owner !== getActiveCharKey();
+    return withContact(row.owner, next);
+}
+app.use('/api/chat', (req,res,next) => {
+    if (req.path === '/proactive') return next();
+    const key = req.query.contact;
+    if (key !== undefined && !contacts.keys().includes(key)) return res.sendStatus(404);
+    withContact(key || getActiveCharKey(), next);
+});
+app.post(['/api/config','/api/mcp/external-identity'], (req,res,next) => {
+    if (req.path.endsWith('external-identity') || (req.body?.activeCharKey && req.body.activeCharKey !== getActiveCharKey())) contacts.remember();
+    next();
+});
+
 function maskHighlightsForClient(rows) {
     return rows.map(item => ({
         ...item,
+        reader_name: item.reader_name || contactName(item.char_key),
         user_note: item.user_note || '',
         is_shared: item.is_shared === 0 ? 0 : 1,
         ai_comment: (item.is_shared !== 0 && item.status === 'locked')
@@ -526,6 +567,9 @@ app.post('/api/config', (req, res) => {
     if (req.body.apiKey && hasNonAscii(req.body.apiKey.trim())) {
         return res.status(400).json({ success: false, message: 'API Key 不能包含中文字符，请填写真实 sk-... 密钥' });
     }
+    if (req.body.activeCharKey && getActiveCharKey().startsWith('ext_')) {
+        saveSetting('contactName_' + getActiveCharKey(), getSetting('charName','TA'));
+    }
     // 已移除旧 contextLimit，避免「⚙️ 设置」表单保存时覆盖统一的 memoMaxContextRounds
     const allowedKeys = [
         'mode', 'soloMode', 'notifyOnFocusDecision', 'notifyOnPauseTimeout', 'notifyOnFocusComplete',
@@ -571,7 +615,7 @@ app.post('/api/config', (req, res) => {
 
     if (req.body.charName && !req.body.activeCharKey) {
         const curKey = getSetting('activeCharKey', '');
-        if (!curKey.startsWith('card_')) {
+        if (!curKey || curKey.startsWith('custom_')) {
             saveSetting('activeCharKey', `custom_${req.body.charName.trim()}`);
         }
     }
@@ -765,16 +809,27 @@ app.delete('/api/characters/:id', (req, res) => {
     vault.charactersDb.prepare('DELETE FROM character_cards WHERE id = ?').run(req.params.id);
     // 物理删除该角色的独立记忆文件 data/memory/card_<id>.db！
     vault.deleteMemoryDb(charKey);
+    contacts.hide(charKey);
+    userScopes.removeRole(charKey);
     res.json({ success: true });
 });
 
 // --- 接口 2.5：👤 独立用户人设卡仓库（data/users/users.db）---
 app.get('/api/users', (req, res) => {
     const rows = vault.usersDb.prepare('SELECT * FROM user_cards ORDER BY id DESC').all();
-    res.json({ success: true, data: rows });
+    res.json({ success: true, data: rows.map(card => ({...card,owners:userScopes.owners(card.id)})) });
 });
 
-app.post('/api/users', (req, res) => {
+function validatedScope(req,res,next) {
+    const owners = req.body?.owners;
+    if (owners === undefined) return next();
+    if (!Array.isArray(owners) || !owners.length || (owners.includes('') && owners.length !== 1) ||
+        owners.some(k=>typeof k !== 'string' || (k && !contacts.keys().includes(k)))) {
+        return res.status(400).json({message:'请选择适用的角色，或设为全局'});
+    }
+    next();
+}
+app.post('/api/users', validatedScope, (req, res) => {
     const {
         user_name = '', avatar = '', use_quick_relation = 0,
         user_relation = '', char_call_user = '', user_persona = ''
@@ -784,10 +839,14 @@ app.post('/api/users', (req, res) => {
 
     const useQuick = use_quick_relation ? 1 : 0;
     const savedAvatar = mediaStore.persistMedia(avatar, 'user');
-    const info = vault.usersDb.prepare(`
+    const info = vault.usersDb.transaction(() => {
+        const info = vault.usersDb.prepare(`
         INSERT INTO user_cards (user_name, avatar, use_quick_relation, user_relation, char_call_user, user_persona)
         VALUES (?, ?, ?, ?, ?, ?)
     `).run(cleanName, savedAvatar, useQuick, String(user_relation).trim(), String(char_call_user).trim(), String(user_persona).trim());
+        if (req.body.owners) userScopes.assign(info.lastInsertRowid,req.body.owners);
+        return info;
+    })();
 
     res.json({
         success: true,
@@ -803,7 +862,7 @@ app.post('/api/users', (req, res) => {
     });
 });
 
-app.put('/api/users/:id', (req, res) => {
+app.put('/api/users/:id', validatedScope, (req, res) => {
     const id = parseInt(req.params.id, 10);
     const existing = vault.usersDb.prepare('SELECT * FROM user_cards WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({ success: false, message: '未找到该用户人设卡' });
@@ -819,11 +878,14 @@ app.put('/api/users/:id', (req, res) => {
     const char_call_user = req.body?.char_call_user !== undefined ? String(req.body.char_call_user).trim() : existing.char_call_user;
     const user_persona = req.body?.user_persona !== undefined ? String(req.body.user_persona).trim() : existing.user_persona;
 
-    vault.usersDb.prepare(`
-        UPDATE user_cards
-        SET user_name = ?, avatar = ?, use_quick_relation = ?, user_relation = ?, char_call_user = ?, user_persona = ?
-        WHERE id = ?
-    `).run(cleanName, avatar, useQuick, user_relation, char_call_user, user_persona, id);
+    vault.usersDb.transaction(() => {
+        vault.usersDb.prepare(`
+            UPDATE user_cards
+            SET user_name = ?, avatar = ?, use_quick_relation = ?, user_relation = ?, char_call_user = ?, user_persona = ?
+            WHERE id = ?
+        `).run(cleanName, avatar, useQuick, user_relation, char_call_user, user_persona, id);
+        if (req.body.owners) userScopes.assign(id,req.body.owners);
+    })();
 
     res.json({
         success: true,
@@ -832,8 +894,11 @@ app.put('/api/users/:id', (req, res) => {
 });
 
 app.delete('/api/users/:id', (req, res) => {
-    vault.usersDb.prepare('DELETE FROM user_cards WHERE id = ?').run(req.params.id);
-    if (getSetting('activeUserId', '') === String(req.params.id)) {
+    vault.usersDb.transaction(() => {
+        userScopes.clear(Number(req.params.id));
+        vault.usersDb.prepare('DELETE FROM user_cards WHERE id = ?').run(req.params.id);
+    })();
+    if (rawSetting('activeUserId', '') === String(req.params.id)) {
         saveSetting('activeUserId', '');
     }
     res.json({ success: true });
@@ -987,13 +1052,13 @@ app.get('/api/chat', (req, res) => {
             .all(limit);
         data = rawRows.map(row => mediaStore.slimChatRowIfNeeded(memDb, row));
     }
-    res.json({ success: true, activeCharKey: charKey, memoryFile: vault.getMemoryDbFilename(charKey), data });
+    res.json({ success: true, activeCharKey: charKey, memoryFile: vault.getMemoryDbFilename(charKey), userName:getSetting('userName','我'), userAvatar:getSetting('userAvatar'), data });
 });
 
 app.delete('/api/chat', (req, res) => {
     const charKey = getActiveCharKey();
     if (req.query.syncMemory === 'true') {
-        const report = wipeCharacterMemory(charKey, { clearChat: true, clearNotes: true, hideWidgets: true });
+        const report = wipeCharacterMemory(charKey, { clearChat: true, clearNotes: true, hideWidgets: charKey === contactScope.exit(getActiveCharKey) });
         return res.json({ success: true, ...report });
     }
     if (vault.hasMemoryDb(charKey)) {
@@ -1036,7 +1101,7 @@ app.post('/api/chat', async (req, res) => {
     const mode = getSetting('mode', 'standalone');
     if (mode === 'mcp') {
         db.prepare('INSERT INTO pending_events (event_type, payload) VALUES (?, ?)')
-            .run('chat_message', JSON.stringify({ messageId: userMsg.id, charKey, content: text, hasImage: Boolean(imageData), hasAudio: Boolean(audioData) }));
+            .run('chat_message', JSON.stringify({ messageId: userMsg.id, charKey, userProfile:userScopes.context(charKey), content: text, hasImage: Boolean(imageData), hasAudio: Boolean(audioData) }));
         pushMemory('chat', 'user', memorySummaryLine, charKey, reqEpoch);
         return res.json({
             success: true, pending: true, userMsg,
@@ -1226,8 +1291,8 @@ app.post('/api/highlights', async (req, res) => {
         const initialStatus = (isShared && isFocusing) ? 'locked' : 'unlocked';
 
         const info = booksDb.prepare(
-            'INSERT INTO highlights (book_id, char_key, text_content, user_note, is_shared, ai_comment, ink_color, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(book_id, charKey, cleanQuote, cleanUserNote, isShared, '', inkColor, initialStatus);
+            'INSERT INTO highlights (book_id, char_key, text_content, user_note, is_shared, ai_comment, ink_color, status, reader_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(book_id, charKey, cleanQuote, cleanUserNote, isShared, '', inkColor, initialStatus, isShared ? getSetting('charName','TA') : '');
         const highlightId = info.lastInsertRowid;
 
         if (!isShared) {
@@ -1277,13 +1342,14 @@ app.post('/api/highlights/:id/share', async (req, res) => {
         const row = booksDb.prepare('SELECT * FROM highlights WHERE id = ?').get(highlightId);
         if (!row) return res.status(404).json({ success: false, message: '未找到该条划线' });
 
+        if (row.is_shared) return res.status(409).json({message:'这条批注已经分享过了'});
         const { user_note, book_title = '', isFocusing = false } = req.body || {};
         const finalUserNote = user_note !== undefined ? String(user_note).trim() : (row.user_note || '');
         const nextStatus = isFocusing ? 'locked' : 'unlocked';
         const charKey = getActiveCharKey();
 
-        booksDb.prepare('UPDATE highlights SET user_note = ?, is_shared = 1, status = ?, char_key = ? WHERE id = ?')
-            .run(finalUserNote, nextStatus, charKey, highlightId);
+        booksDb.prepare('UPDATE highlights SET user_note = ?, is_shared = 1, status = ?, char_key = ?, reader_name = ? WHERE id = ? AND is_shared = 0')
+            .run(finalUserNote, nextStatus, charKey, getSetting('charName','TA'), highlightId);
 
         if (isFocusing) {
             res.json({ success: true, id: highlightId, status: 'locked', message: '已分享给 TA，专注结束后显影' });
@@ -1450,6 +1516,7 @@ app.post('/api/notes/:id/share', async (req, res) => {
     if (getBoolSetting('soloMode', false)) return res.status(400).json({ success: false, message: '单人专注模式下无法递给 TA 哦～' });
     const charKey = getActiveCharKey();
     if (!vault.hasMemoryDb(charKey)) return res.status(404).json({ success: false, message: '未找到该便签' });
+    if (req.query.owner && req.query.owner !== vault.sanitizeCharKey(charKey)) return res.sendStatus(409);
     const row = vault.getMemoryDb(charKey).prepare('SELECT * FROM notes WHERE id = ?').get(req.params.id);
     if (!row) return res.status(404).json({ success: false, message: '未找到该便签' });
 
@@ -1824,7 +1891,10 @@ const mcpOwner = require('./mcp-owner');
 app.use(['/api/mcp/context','/api/mcp/resolve-music','/api/mcp/reply-highlight','/api/mcp/post-note','/api/mcp/reply-chat'], (req,res,next) => {
     const token=getSetting('mcpToken','').trim();
     if (token && req.headers.authorization!=='Bearer '+token && req.query.token!==token) return res.sendStatus(401);
-    if (mcpOwner.guard({getSetting,saveSetting,getActiveCharKey},req,res,req.query.owner || req.headers['x-cloudrift-owner'])) next();
+    withBoundOwner(req,res,req.query.owner || req.headers['x-cloudrift-owner'], () => {
+        if (req.remoteContact && !['/api/mcp/reply-chat','/api/mcp/context'].includes(req.baseUrl)) return res.sendStatus(409);
+        next();
+    });
 });
 app.get('/api/mcp/context', (req, res) => {
     const charKey = getActiveCharKey();
@@ -1834,7 +1904,8 @@ app.get('/api/mcp/context', (req, res) => {
         success: true,
         activeCharKey: charKey,
         memoryFile: vault.getMemoryDbFilename(charKey),
-        contextText: getRoomContextSummary({ charKey }),
+        userProfile:userScopes.context(charKey),
+        contextText: req.remoteContact ? '当前为独立好友通讯' : getRoomContextSummary({ charKey }),
         pendingEvents: db.prepare("SELECT * FROM pending_events WHERE status = 'waiting' AND "+mcpOwner.ownerSQL+"=? ORDER BY id ASC").all(charKey),
         recentNotes: memDb ? memDb.prepare("SELECT * FROM notes ORDER BY id DESC LIMIT 5").all() : [],
         recentChat: memDb ? memDb.prepare("SELECT * FROM chat_messages ORDER BY id DESC LIMIT 10").all().reverse() : [],
@@ -1929,7 +2000,7 @@ app.delete('/api/presets/profiles/:name', (req, res) => {
 
 require('./theater-routes')(app, { worldbooks, db, vault, getSetting, getActiveCharKey, getModelName, createAIClient, renderTemplateVars });
 require('./chat-pro-routes')(app, {
-    db, tts, presets, vault, memoEngine, mediaStore,
+    db, tts, presets, vault, memoEngine, mediaStore, userScopes, contactPrompt, withBoundOwner, roomKey: () => contactScope.exit(getActiveCharKey),
     getSetting, saveSetting, getBoolSetting, getActiveCharKey,
     createAIClient, getModelName, getPersonasBlock, getRoomContextSummary,
     getUnifiedMemoryMessages, buildOrderedMessages, cleanAIOutput,

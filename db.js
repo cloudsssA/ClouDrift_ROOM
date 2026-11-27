@@ -148,6 +148,10 @@ musicDb.exec(`
   );
 `);
 
+if (!booksDb.pragma('table_info(highlights)').some(col => col.name === 'reader_name')) {
+    booksDb.exec("ALTER TABLE highlights ADD COLUMN reader_name TEXT NOT NULL DEFAULT ''");
+}
+
 // 4. 自动无损迁移：若旧 study_room.db 里有 books / highlights / playlist，自动搬家至独立库
 function tableExists(database, tableName) {
     return Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName));
