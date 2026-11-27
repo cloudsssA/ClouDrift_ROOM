@@ -62,6 +62,15 @@
                 flex-direction: column;
                 padding: 20px 22px 16px;
             }
+            #memoryManagerModal .modal-box { box-sizing:border-box; max-height:min(90vh, 100%); overflow:auto; }
+            #memoryManagerModal .memo-pane { min-width:0; min-height:0; overflow:auto; }
+            #memoryManagerModal .mem-summary-strip > * { min-width:0; max-width:100%; box-sizing:border-box; }
+            #memoryManagerModal .mem-summary-strip code { display:block; overflow-wrap:anywhere; white-space:normal; word-break:break-all; }
+            @media(max-width:600px) {
+                #memoryManagerModal .modal-box { padding:14px; max-height:90dvh; }
+                #memoryManagerModal .mem-list-scroll { min-height:100px; }
+                #memoryManagerModal .mem-footer-actions button { max-width:100%; white-space:normal; }
+            }
             .mem-summary-strip {
                 display: flex;
                 justify-content: space-between;
@@ -278,7 +287,7 @@
         wrap.innerHTML = `
             <div class="modal-box">
                 <h3 style="margin-bottom:10px;">
-                    <span>🧠 全局上下文记忆管理</span>
+                    <span>🧠 当前角色记忆</span>
                     <span style="cursor:pointer;color:#a8a29e" onclick="closeModal('memoryManagerModal')">✕</span>
                 </h3>
 
@@ -406,7 +415,7 @@
             : '';
 
         summary.innerHTML = `
-            <div style="flex:1;min-width:240px;">
+            <div style="flex:1 1 240px;min-width:0;overflow-wrap:anywhere;">
                 <div>当前角色：<strong>${esc(memData.charName)}</strong> · 库中共存 <strong>${memData.totalCount}</strong> 条记忆</div>
                 <div class="mem-summary-pills">
                     <span class="mem-stat-chip live">${activeText}</span>

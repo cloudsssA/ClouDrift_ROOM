@@ -327,7 +327,12 @@
                 return;
             }
 
-            if (d.lastChatId > knownChatId) {
+            if (chatContact && chatKey() !== d.activeCharKey && document.getElementById('commDrawer').classList.contains('open') && !window.ChatPro.hasPendingChat()) {
+                const key = chatKey();
+                const last = await fetch(chatURL('?limit=1', key)).then(r=>r.json());
+                if (key === chatKey() && (last.data?.[0]?.id || 0) !== (chatHistory.at(-1)?.id || 0)) await loadChatHistory();
+            }
+            if (chatKey() === d.activeCharKey && d.lastChatId > knownChatId) {
                 knownChatId = d.lastChatId;
                 const getLocalMax = () => (typeof chatHistory !== 'undefined' && chatHistory.length)
                     ? Math.max(...chatHistory.map(m => Number(m.id) || 0))
@@ -350,11 +355,11 @@
             if (d.lastNoteId > knownNoteId) {
                 knownNoteId = d.lastNoteId;
                 const localNoteMax = (typeof notesList !== 'undefined' && notesList.length)
-                    ? Math.max(...notesList.map(n => Number(n.id) || 0))
+                    ? Math.max(0, ...notesList.filter(n => n.owner + '.db' === appConfig.memoryFile).map(n => Number(n.id) || 0))
                     : 0;
                 if (d.lastNoteId > localNoteMax && typeof loadNotes === 'function') {
                     await loadNotes();
-                    const newestNote = notesList[0];
+                    const newestNote = notesList.find(n => n.owner + '.db' === appConfig.memoryFile);
                     if (newestNote && newestNote.author !== 'user' && typeof showCommBanner === 'function') {
                         showCommBanner(`📌 ${appConfig.charName || 'TA'} 贴了张新便利贴`, newestNote.content || '快去书桌看看吧～', false);
                     }

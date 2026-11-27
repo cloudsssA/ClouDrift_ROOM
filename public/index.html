@@ -653,7 +653,7 @@
         #topBar .topbar-menu-btn.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow) inset; }
 
         /* 右侧精致下拉菜单（自动收纳小窝、角色卡、用户、记忆、配置、设置等全部插件按钮！） */
-        #topBar > .top-bar-right {
+        #topBar > .top-bar-right, #topBar > #contactMenu {
             position: absolute !important;
             top: calc(100% + 8px) !important;
             right: 0 !important;
@@ -679,12 +679,12 @@
             pointer-events: none !important;
             transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1) !important;
         }
-        #topBar > .top-bar-right.menu-open {
+        #topBar > .top-bar-right.menu-open, #topBar > #contactMenu.menu-open {
             opacity: 1 !important;
             transform: translateY(0) scale(1) !important;
             pointer-events: auto !important;
         }
-        #topBar > .top-bar-right .icon-btn {
+        #topBar > .top-bar-right .icon-btn, #topBar #contactMenu .icon-btn {
             width: 100% !important;
             display: flex !important;
             align-items: center !important;
@@ -699,10 +699,27 @@
             backdrop-filter: none !important;
             transform: none !important;
         }
-        #topBar > .top-bar-right .icon-btn:hover {
+        #topBar > .top-bar-right .icon-btn:hover, #topBar #contactMenu .icon-btn:hover {
             background: rgba(255, 255, 255, 0.15) !important;
             border-color: rgba(255, 255, 255, 0.18) !important;
         }
+        #topBar > #contactMenu { width: min(268px, calc(100vw - 24px)) !important; right: var(--contact-right, 0px) !important; max-height: min(54vh, 420px); overflow: auto; box-sizing: border-box; }
+        #contactMenu:not(.menu-open) { visibility: hidden; }
+        #userScopeBox { margin: 0 0 18px; padding: 10px 12px; border: 1px solid #44403c; border-radius: 12px; min-width: 0; }
+        #userScopeBox legend { color: #d6d3d1; font-size: 13px; }
+        #userScopeBox label { display: flex; align-items: center; gap: 7px; padding: 7px 0; flex-wrap: wrap; font-size: 13px; cursor: pointer; }
+        #userScopeBox input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+        #userScopeBox small { color: #a8a29e; }
+        #userScopeFriends { max-height: 160px; overflow: auto; overflow-wrap: anywhere; }
+        #contactMenu .friend-row { display:flex; align-items:center; gap:4px; }
+        #contactMenu .friend-row .icon-btn { flex:1; width:auto !important; min-width:0; }
+        #contactMenu .remove-friend { background:transparent; color:#d6d3d1; border:0; font-size:18px; padding:8px; }
+        #contactMenu button { min-width: 0; flex: none; text-align: left; }
+        #contactMenu .friend-avatar { width: 32px; height: 32px; flex: none; border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--accent); }
+        #contactMenu img { width: 100%; height: 100%; object-fit: cover; }
+        #contactMenu .friend-label { min-width: 0; }
+        #contactMenu strong, #contactMenu small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+        #contactMenu small { opacity: .65; }
         #topBar > .top-bar-right #openHomeBtn {
             border-color: var(--accent) !important;
             background: rgba(217, 119, 6, 0.20) !important;
@@ -792,9 +809,10 @@
             <span class="mode-pill" id="modeBadge" onclick="toggleModePopover(event)" title="查看当前陪伴角色 / 切换单人模式">🧠 线上陪伴</span>
         </div>
         <div class="top-bar-actions">
-            <button class="icon-btn icon-btn-blue ai-only" onclick="toggleChatDrawer()">✉️ 通讯<span class="unread-dot" id="commUnreadDot"></span></button>
+            <button class="icon-btn icon-btn-blue ai-only" id="contactButton" aria-controls="contactMenu" aria-expanded="false" onclick="toggleContacts(event)">✉️ 通讯<span class="unread-dot" id="commUnreadDot"></span></button>
             <button class="icon-btn topbar-menu-btn" id="topBarMenuBtn" type="button" onclick="toggleTopBarMenu(event)" title="展开功能菜单">☰<span class="topbar-menu-text"> 菜单</span></button>
         </div>
+        <div id="contactMenu" inert aria-label="好友列表"></div>
         <!-- 左侧陪伴角色名片 + 切换单人浮层 -->
         <div class="mode-popover" id="modePopover" onclick="event.stopPropagation()">
             <div class="mode-pop-head">
@@ -1184,6 +1202,12 @@
                 </div>
             </div>
             <div class="form-group"><label>你是谁 / 你的名字（对应 {{user}}）</label><input id="cfgUserName" placeholder="例如：你的名字 / OC 名字"></div>
+            <fieldset id="userScopeBox">
+                <legend>生效范围</legend>
+                <label><input type="radio" name="userScope" value="global" checked> 全局 <small>没有单独指定的角色使用这张卡</small></label>
+                <label><input type="radio" name="userScope" value="selected"> 指定角色 <small>优先于全局，可多选</small></label>
+                <div id="userScopeFriends" hidden></div>
+            </fieldset>
             <div class="settings-section-box">
                 <button type="button" class="quick-rel-toggle" onclick="toggleQuickRelationSection()">
                     <span>🧩 快捷补充关系与称呼（选填）</span>
@@ -1435,6 +1459,18 @@
             bgImage: '', bgImageMobile: '', bgMode: 'cover', bgBlur: 0, bgDim: 0.32,
             contextLimit: 24, memoryCount: 0
         };
+        let chatContact = null;
+        const chatUserName = () => chatContact?.userName ?? appConfig.userName;
+        const chatUserAvatar = () => chatContact?.userAvatar ?? appConfig.userAvatar;
+        const chatKey = () => chatContact?.key || appConfig.activeCharKey;
+        const chatName = () => chatContact?.name || appConfig.charName;
+        const chatAvatar = () => chatContact ? chatContact.avatar : appConfig.charAvatar;
+        function chatURL(path, key = chatKey()) {
+            const url = new URL(API_BASE + '/api/chat' + path, location.href);
+            if (key) url.searchParams.set('contact', key);
+            return url;
+        }
+        let historyVersion = 0;
         let draftCharAvatar = '', draftUserAvatar = '', draftActiveCharKey = '', draftUseQuickRelation = false, draftBgImage = '', draftBgImageMobile = '';
         let currentBookId = null, currentBookSavedToShelf = true, selectedQuote = '', editingHighlightId = null, selectionDebounceTimer = null;
         let pendingImportContent = '';
@@ -1648,11 +1684,15 @@
             const lbl = document.getElementById('readerFontSizeLabel'); if (lbl) lbl.innerText = `${readerFontSize}px`;
         }
         function changeReaderFontSize(delta) { applyReaderFontSize(readerFontSize + delta); }
-        function renderAvatarHtml(imgData, fallback) { return imgData ? `<img src="${imgData}" alt="avatar">` : escapeHtml((fallback || 'TA').slice(0, 1)); }
+        function renderAvatarHtml(imgData, fallback) { return imgData ? `<img src="${escapeHtml(imgData)}" alt="avatar">` : escapeHtml((fallback || 'TA').slice(0, 1)); }
         function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
         // 🧘 单人专注模式切换
         function closeTopBarPopovers() {
+            const contacts = document.getElementById('contactMenu');
+            contacts.classList.remove('menu-open');
+            contacts.inert = true;
+            document.getElementById('contactButton').setAttribute('aria-expanded','false');
             document.getElementById('modePopover')?.classList.remove('open');
             document.getElementById('topBarDropdown')?.classList.remove('menu-open');
             document.getElementById('topBarMenuBtn')?.classList.remove('active');
@@ -1742,12 +1782,17 @@
         async function loadConfig() {
             try {
                 const data = await (await fetch(`${API_BASE}/api/config`)).json();
+                const previousRoom = appConfig.activeCharKey;
                 appConfig = { ...appConfig, ...data };
+                if (!chatContact && previousRoom !== appConfig.activeCharKey) window.ChatPro?.refreshView();
+                if (chatContact?.key === appConfig.activeCharKey) {
+                    chatContact = {key:appConfig.activeCharKey, name:appConfig.charName, avatar:appConfig.charAvatar};
+                }
                 applyThemeColors(appConfig.pageBgColor, appConfig.cardBgColor, appConfig.accentColor, appConfig.timerColor);
                 applyWallpaper(appConfig.bgImage, appConfig.bgMode, appConfig.bgBlur, appConfig.bgDim, appConfig.bgImageMobile);
-                const name = appConfig.charName || '连线搭子';
+                const name = chatName() || '连线搭子';
                 document.getElementById('imCharName').innerText = name;
-                document.getElementById('imHeaderAvatar').innerHTML = renderAvatarHtml(appConfig.charAvatar, name);
+                document.getElementById('imHeaderAvatar').innerHTML = renderAvatarHtml(chatAvatar(), name);
                 applySoloModeUI();
                 renderChatMessages(chatHistory);
             } catch (e) {}
@@ -1774,7 +1819,7 @@
             document.getElementById('commToastBanner').classList.remove('show');
             const action = document.getElementById('commToastBanner').onTheaterClick;
             if (action) return action();
-            if (!appConfig.soloMode && !document.getElementById('commDrawer').classList.contains('open')) toggleChatDrawer();
+            if (!appConfig.soloMode) openFriend({key:appConfig.activeCharKey,name:appConfig.charName,avatar:appConfig.charAvatar});
         }
 
         // 头像裁剪器
@@ -1877,11 +1922,13 @@
         async function saveCharacterPanel() {
             const newName = document.getElementById('cfgCharName').value.trim() || '连线搭子';
             const nextKey = draftActiveCharKey || `custom_${newName}`;
-            await fetch(`${API_BASE}/api/config`, {
+            const response = await fetch(`${API_BASE}/api/config`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ activeCharKey: nextKey, charName: newName, persona: document.getElementById('cfgPersona').value.trim(), charAvatar: draftCharAvatar })
             });
-            closeModal('characterModal'); await loadConfig(); await loadChatHistory(); await loadNotes();
+            if (!response.ok) return showCommBanner('角色切换失败', '请重试');
+            closeModal('characterModal'); await loadConfig();
+            await Promise.all([loadChatHistory(), loadNotes(), loadHighlights()]);
         }
         async function loadCharacterCards() {
             try { savedCharacters = (await (await fetch(`${API_BASE}/api/characters`)).json()).data || []; renderCharacterPresets(); } catch (e) {}
@@ -2180,6 +2227,7 @@ let fetchedModelsList = [];
             } else if (decision === 'continue' && isPaused) { commitCurrentPause(); startMainTimerLoop(); }
 
             try {
+                const senderKey = appConfig.activeCharKey;
                 const res = await fetch(`${API_BASE}/api/focus/decision`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ decision, elapsedMinutes, remainingMinutes, totalMinutes: selectedMinutes, currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
@@ -2194,7 +2242,7 @@ let fetchedModelsList = [];
                 const incomingMsgs = Array.isArray(data.chatMsgs) && data.chatMsgs.length
                     ? data.chatMsgs
                     : (data.chatMsg ? [data.chatMsg] : []);
-                if (incomingMsgs.length) {
+                if (incomingMsgs.length && senderKey === chatKey()) {
                     if (window.ChatPro && typeof window.ChatPro.deliverExternalBubbles === 'function') {
                         window.ChatPro.deliverExternalBubbles(incomingMsgs);
                     } else {
@@ -2237,16 +2285,19 @@ let fetchedModelsList = [];
         }
         function clearPendingAttachment() { pendingImageBase64 = ''; pendingAudioBase64 = ''; updateAttachPreviewUI(); }
         async function handleChatImageSelect(event) {
+            const owner = chatKey();
             const file = event.target.files?.[0]; if (!file) return;
-            pendingImageBase64 = await compressImageToBase64(file, 960, 0.84); updateAttachPreviewUI(); event.target.value = '';
+            const image = await compressImageToBase64(file, 960, 0.84); if (owner !== chatKey()) return; pendingImageBase64 = image; updateAttachPreviewUI(); event.target.value = '';
         }
         document.getElementById('imInput').addEventListener('paste', async (e) => {
+            const owner = chatKey();
             const items = e.clipboardData?.items; if (!items) return;
             for (const item of items) {
-                if (item.type.startsWith('image/')) { const file = item.getAsFile(); if (file) { pendingImageBase64 = await compressImageToBase64(file, 960, 0.84); updateAttachPreviewUI(); } }
+                if (item.type.startsWith('image/')) { const file = item.getAsFile(); if (file) { const image = await compressImageToBase64(file, 960, 0.84); if (owner !== chatKey()) return; pendingImageBase64 = image; updateAttachPreviewUI(); } }
             }
         });
         async function toggleVoiceRecording() {
+            const owner = chatKey();
             const btn = document.getElementById('chatVoiceBtn');
             if (isRecordingAudio && mediaRecorder) {
                 mediaRecorder.stop();
@@ -2264,6 +2315,7 @@ let fetchedModelsList = [];
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
                 });
+                if (owner !== chatKey()) { stream.getTracks().forEach(t=>t.stop()); return; }
                 audioChunks = [];
                 // 苹果 Safari 不支持 webm，按优先级自动回落到 audio/mp4 (m4a)
                 const candidates = [
@@ -2290,6 +2342,7 @@ let fetchedModelsList = [];
                     const blob = new Blob(audioChunks, { type: finalMime });
                     const reader = new FileReader();
                     reader.onloadend = () => {
+                        if (owner !== chatKey()) return;
                         pendingAudioBase64 = reader.result;
                         updateAttachPreviewUI();
                     };
@@ -2309,11 +2362,20 @@ let fetchedModelsList = [];
             const d = document.getElementById('commDrawer'); d.classList.toggle('open');
             if (d.classList.contains('open')) { document.getElementById('commUnreadDot').classList.remove('show'); scrollChatToBottom(); setTimeout(() => document.getElementById('imInput').focus(), 200); }
         }
-        async function loadChatHistory() { try { const r = await fetch(`${API_BASE}/api/chat`); if (r.ok) { chatHistory = (await r.json()).data || []; renderChatMessages(chatHistory); } } catch (e) {} }
+        async function loadChatHistory() {
+            const version = ++historyVersion;
+            const response = await fetch(chatURL(''));
+            if (!response.ok) return;
+            const result = await response.json();
+            if (version !== historyVersion || result.activeCharKey !== chatKey()) return;
+            if (chatContact) Object.assign(chatContact, {userName:result.userName,userAvatar:result.userAvatar});
+            chatHistory = result.data || [];
+            renderChatMessages(chatHistory);
+        }
         function renderChatMessages(list) {
             const box = document.getElementById('imMessagesList');
-            if (!list || !list.length) { box.innerHTML = `<div style="text-align:center;color:#636366;font-size:12px;margin-top:20px;">给正在线上连线的 ${escapeHtml(appConfig.charName || 'TA')} 发条消息、图片或语音吧～</div>`; return; }
-            const cAva = renderAvatarHtml(appConfig.charAvatar, appConfig.charName || 'TA'), uAva = renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我');
+            if (!list || !list.length) { box.innerHTML = `<div style="text-align:center;color:#636366;font-size:12px;margin-top:20px;">给正在线上连线的 ${escapeHtml(chatName() || 'TA')} 发条消息、图片或语音吧～</div>`; return; }
+            const cAva = renderAvatarHtml(chatAvatar(), chatName() || 'TA'), uAva = renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我');
             box.innerHTML = list.map(m => m.role === 'user'
                 ? `<div class="im-bubble-row user"><div class="im-bubble">${renderBubbleInnerHtml(m.content)}</div><div class="bubble-avatar">${uAva}</div></div>`
                 : `<div class="im-bubble-row assistant"><div class="bubble-avatar">${cAva}</div><div class="im-bubble">${renderBubbleInnerHtml(m.content)}</div></div>`
@@ -2324,7 +2386,7 @@ let fetchedModelsList = [];
             const box = document.getElementById('imMessagesList');
             if (!box.querySelector('.im-bubble-row')) box.innerHTML = '';
             const row = document.createElement('div'); row.className = `im-bubble-row ${role}`;
-            const ava = role === 'user' ? renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我') : renderAvatarHtml(appConfig.charAvatar, appConfig.charName || 'TA');
+            const ava = role === 'user' ? renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我') : renderAvatarHtml(chatAvatar(), chatName() || 'TA');
             const inner = isTyping ? escapeHtml(content) : renderBubbleInnerHtml(content);
             row.innerHTML = role === 'user'
                 ? `<div class="im-bubble">${inner}</div><div class="bubble-avatar">${ava}</div>`
@@ -2343,7 +2405,7 @@ let fetchedModelsList = [];
             document.getElementById('imSubStatus').innerText = '对方正在输入...';
             const typing = appendBubble('assistant', '• • •', true);
             try {
-                const res = await fetch(`${API_BASE}/api/chat`, {
+                const res = await fetch(chatURL(''), {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         content: text, imageData: imgToSend, audioData: audToSend, audioFormat: audFmt,
@@ -2356,14 +2418,14 @@ let fetchedModelsList = [];
             finally { btn.disabled = false; document.getElementById('imSubStatus').innerText = '✉️ 通讯 · 线上自习室连线中'; input.focus(); }
         }
         function openClearChatModal() {
-            const name = appConfig.charName || 'TA';
+            const name = chatName() || 'TA';
             document.getElementById('clearChatModalDesc').innerText = `要如何清理与【${name}】的记录呢？如果只是手滑点到了垃圾桶，直接点最下面取消就行～`;
             document.getElementById('clearChatModal').classList.add('open');
         }
         async function executeClearChat(syncAll) {
             closeModal('clearChatModal');
-            const name = appConfig.charName || 'TA';
-            await fetch(`${API_BASE}/api/chat?syncMemory=${syncAll ? 'true' : 'false'}`, { method: 'DELETE' });
+            const name = chatName() || 'TA';
+            await fetch(chatURL('?syncMemory=' + syncAll), { method: 'DELETE' });
             chatHistory = []; renderChatMessages([]);
             showCommBanner(syncAll ? '🧹 已彻底重置' : '🫧 已清空气泡', syncAll ? `【${name}】的通讯气泡与全网页连续记忆已归零～` : `通讯气泡已清空，【${name}】仍记得之前的互动哦～`, false);
         }
@@ -2893,12 +2955,12 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                 let aiBlockHtml = '';
                 if (item.is_shared) {
                     aiBlockHtml = item.status === 'locked'
-                        ? `<div class="margin-locked">🔒 ${escapeHtml(appConfig.charName || 'TA')} 已写下批注，专注结束后显影</div>`
+                        ? `<div class="margin-locked">🔒 ${escapeHtml(item.reader_name || '早期角色')} 已写下批注，专注结束后显影</div>`
                         : `<div class="margin-reply" style="color:${ink}">${escapeHtml(item.ai_comment || '（TA 正在组织语言，稍等刷新一下～）')}</div>`;
                 }
                 const shareBtnHtml = appConfig.soloMode ? '' : `<button class="margin-mini-act" onclick="shareExistingHighlight(${item.id})">📤 分享给TA</button>`;
                 const footerHtml = item.is_shared
-                    ? `<div class="margin-card-footer"><span class="margin-tag">📤 已与 ${escapeHtml(appConfig.charName || 'TA')} 共读</span><button class="margin-mini-act" onclick="locateHighlightInBook(${item.id})">📍 定位原文</button></div>`
+                    ? `<div class="margin-card-footer"><span class="margin-tag">📤 已与 ${escapeHtml(item.reader_name || '早期角色')} 共读</span><button class="margin-mini-act" onclick="locateHighlightInBook(${item.id})">📍 定位原文</button></div>`
                     : `<div class="margin-card-footer"><span class="margin-tag">🔖 仅自己可见</span><div style="display:flex;gap:4px;"><button class="margin-mini-act" onclick="openHighlightNoteModal(false, ${item.id})">✏️ 备注</button>${shareBtnHtml}</div></div>`;
                 return `<div class="margin-card" data-cid="${item.id}"><button class="margin-del-btn" onclick="deleteHighlight(${item.id})" title="删除">✕</button><div class="margin-quote" onclick="locateHighlightInBook(${item.id})" title="点击跳转到原文位置">“${escapeHtml(item.text_content)}”</div>${userNoteHtml}${aiBlockHtml}${footerHtml}</div>`;
             }).join('');
@@ -2926,17 +2988,8 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                     body: JSON.stringify({ content: text, askReply: wantReply, ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
                 });
                 const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '贴条失败');
-                // 防轮询抢跑导致同一张便利贴影分身出现两次！
-                if (data.userNote) {
-                    notesList = notesList.filter(n => n.id !== data.userNote.id);
-                    notesList.unshift(data.userNote);
-                }
-                if (data.aiNote) {
-                    notesList = notesList.filter(n => n.id !== data.aiNote.id);
-                    notesList.unshift(data.aiNote);
-                    showCommBanner(`📌 ${appConfig.charName || 'TA'} 回了张便利贴`, data.aiNote.content || '快去书桌看看吧～', false);
-                }
-                currentNoteIdx = 0; renderNotes();
+                await loadNotes();
+                if (data.aiNote) showCommBanner('📌 收到便利贴回条', data.aiNote.content || '快去书桌看看吧～', false);
             } catch (e) { showCommBanner('⚠️ 贴条失败', e.message, false); renderNotes(); }
         }
         async function shareCurrentNoteToAI() {
@@ -2945,12 +2998,12 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
             if (!cur || !cur.id) return;
             showCommBanner('💌 已把这张便签递给 ' + (appConfig.charName || 'TA'), '正在等 TA 写回条...', false);
             try {
-                const res = await fetch(`${API_BASE}/api/notes/${cur.id}/share`, {
+                const res = await fetch(`${API_BASE}/api/notes/${cur.id}/share?owner=${encodeURIComponent(cur.owner)}`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
                 });
                 const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '递条失败');
-                if (data.aiNote) { notesList.unshift(data.aiNote); currentNoteIdx = 0; renderNotes(); }
+                if (data.aiNote) await loadNotes();
             } catch (e) { showCommBanner('⚠️ 递条失败', e.message, false); }
         }
         async function summonAINote() {
@@ -2968,7 +3021,7 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                     body: JSON.stringify({ ...getFocusPayload(), currentSong: playlist[currentSongIndex]?.title || '', deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
                 });
                 const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || '召唤失败');
-                if (data.note) { notesList.unshift(data.note); currentNoteIdx = 0; renderNotes(); }
+                if (data.note) await loadNotes();
             } catch (e) {
                 document.getElementById('noteContent').innerText = `⚠️ ${e.message}`;
             } finally { btn.disabled = false; btn.innerText = '✨ 戳TA'; }
@@ -2996,11 +3049,21 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                     body: JSON.stringify({ awayDuration, deskSummary: getDeskSummary(), activeWidgetId: getActiveWidgetId() })
                 });
                 const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
-                if (data.note) { notesList.unshift(data.note); currentNoteIdx = 0; renderNotes(); }
+                if (data.note) await loadNotes();
             } catch (e) { document.getElementById('noteContent').innerText = `⚠️ 贴条失败：${e.message}`; }
         }
+        let noteRequest = 0;
         async function loadNotes() {
-            try { notesList = (await (await fetch(`${API_BASE}/api/notes`)).json()).data || []; currentNoteIdx = 0; renderNotes(); } catch (e) {}
+            const request = ++noteRequest;
+            try {
+                const response = await fetch(`${API_BASE}/api/desk/notes`);
+                if (!response.ok) return;
+                const {data} = await response.json();
+                if (request !== noteRequest) return;
+                notesList = data;
+                currentNoteIdx = 0;
+                renderNotes();
+            } catch (e) { console.warn('读取便利贴失败', e); }
         }
         function shiftNote(delta) {
             if (notesList.length <= 1) return;
@@ -3016,12 +3079,12 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
             applyStickyNoteStyle(noteEl, cur.note_color || appConfig.noteColor || '#fef08a');
             noteEl.classList.toggle('from-user', cur.author === 'user');
             document.getElementById('noteContent').innerText = cur.content;
-            const shareNoteBtn = (cur.author === 'user' && !appConfig.soloMode)
+            const shareNoteBtn = (cur.author === 'user' && cur.owner + '.db' === appConfig.memoryFile && !appConfig.soloMode)
                 ? `<button type="button" class="tear-btn" style="margin-right:6px;" onclick="shareCurrentNoteToAI()">💌 给TA看</button>`
                 : '';
             document.getElementById('noteAuthor').innerHTML = cur.author === 'user'
                 ? `${shareNoteBtn}— ${escapeHtml(appConfig.userName || '我')}`
-                : `— ${escapeHtml(appConfig.charName || 'TA')}`;
+                : `— ${escapeHtml(cur.ownerName || '早期角色')}`;
             if (notesList.length > 1) {
                 pager.style.display = 'inline-flex';
                 document.getElementById('notePagerText').innerText = `${currentNoteIdx + 1}/${notesList.length}`;
@@ -3030,10 +3093,10 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
         }
         async function tearCurrentNote() {
             if (!notesList.length) { document.getElementById('stickyNote').classList.remove('show'); document.getElementById('emptyNoteText').style.display = 'block'; return; }
-            const [cur] = notesList.splice(currentNoteIdx, 1);
-            if (currentNoteIdx >= notesList.length) currentNoteIdx = Math.max(0, notesList.length - 1);
-            renderNotes();
-            if (cur?.id) await fetch(`${API_BASE}/api/notes/${cur.id}`, { method: 'DELETE' });
+            const cur = notesList[currentNoteIdx];
+            const res = await fetch(`${API_BASE}/api/desk/notes/${encodeURIComponent(cur.owner)}/${cur.id}`, {method:'DELETE'});
+            if (!res.ok && res.status !== 404) return showCommBanner('撕下失败', '请稍后重试');
+            await loadNotes();
         }
 
         // 💿 唱片机 + 可视化歌单目录 + 切歌博弈
@@ -3170,7 +3233,7 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                     toast.innerText = `✅ 准了：“${data.reason}”`;
                 } else {
                     skipBtn.classList.add('rejected'); skipBtn.innerText = '驳回！'; toast.innerText = `❌ ${data.reason}`;
-                    if (data.note) { notesList.unshift(data.note); currentNoteIdx = 0; renderNotes(); }
+                    if (data.note) await loadNotes();
                     setTimeout(() => { skipBtn.classList.remove('rejected'); skipBtn.innerText = '切歌'; }, 1500);
                 }
             } catch (e) { toast.innerText = `⚠️ 网络异常：${e.message}`; }
@@ -3259,6 +3322,7 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                 showCommBanner('🧪 正在召唤 ' + (appConfig.charName || 'TA'), '模拟静默触发主动消息中，请稍候 3 秒...', false);
             }
             try {
+                const senderKey = appConfig.activeCharKey;
                 const res = await fetch(`${API_BASE}/api/chat/proactive`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -3273,7 +3337,7 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
                 if (data.pending) showCommBanner('ClouDrift', '已为当前外部角色排入主动消息，等待客户端领取。', false);
                 if (Array.isArray(data.replyMsgs) && data.replyMsgs.length) {
                     const drawerOpen = document.getElementById('commDrawer')?.classList.contains('open');
-                    for (const msg of data.replyMsgs) {
+                    for (const msg of senderKey === chatKey() ? data.replyMsgs : []) {
                         chatHistory.push(msg);
                         window.appendBubble('assistant', msg.content, false, { msgId: msg.id });
                     }
@@ -3423,5 +3487,6 @@ async function extractTextFromPdfBuffer(arrayBuffer) {
     <script src="/home/home-engine.js"></script>
     <script src="/home/home-ui.js"></script>
     <script src="/appearance-ui.js"></script>
+    <script src="/contacts-ui.js"></script>
 </body>
 </html>

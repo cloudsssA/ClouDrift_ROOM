@@ -411,75 +411,120 @@
     }
 
     // 4. 升级麦克风录音：录完自动转成标准 16kHz 单声道 WAV，彻底修复 Gemini 不支持 audio/webm 的报错！
-    let recStream = null;
-    let recInstance = null;
-    let recChunks = [];
-    let recActive = false;
-
-    window.toggleVoiceRecording = async function () {
-        const btn = document.getElementById('chatVoiceBtn');
-        const sub = document.getElementById('imSubStatus');
-
-        if (recActive && recInstance) {
-            recActive = false;
-            if (btn) { btn.classList.remove('recording'); btn.innerText = '🎙️'; }
-            if (sub) sub.innerText = '⏳ 正在将语音转为标准 WAV 格式...';
-            try { recInstance.stop(); } catch {}
-            return;
-        }
-
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            alert('当前环境不支持麦克风录音（需 localhost 或 HTTPS 链接）哦～');
-            return;
-        }
-
+    const voiceButton = document.getElementById('chatVoiceBtn');
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = 'audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm';
+    picker.hidden = true;
+    voiceButton.after(picker);
+    let take = null;
+    let fileMode = !window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder;
+    function refreshButton() {
+        voiceButton.textContent = fileMode ? '🎵' : '🎙️';
+        voiceButton.title = fileMode ? '选择语音文件发送' : '点击录音，再点完成';
+        voiceButton.setAttribute('aria-label',voiceButton.title);
+        voiceButton.classList.remove('recording');
+    }
+    function current(t) { return take === t && t.owner === chatKey(); }
+    function status(message) { document.getElementById('imSubStatus').textContent = message; }
+    function release(t) { t?.stream?.getTracks().forEach(track=>track.stop()); }
+    function cancelVoice() {
+        const old = take;
+        take = null;
+        if (old?.recorder?.state === 'recording') old.recorder.stop();
+        release(old);
+        refreshButton();
+    }
+    async function attach(t,blob) {
+        if (!current(t)) return;
         try {
-            recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            recChunks = [];
-            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? 'audio/webm;codecs=opus'
-                : (MediaRecorder.isTypeSupported('audio/webm')
-                    ? 'audio/webm'
-                    : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''));
-            recInstance = mimeType ? new MediaRecorder(recStream, { mimeType }) : new MediaRecorder(recStream);
-
-            recInstance.ondataavailable = (ev) => {
-                if (ev.data && ev.data.size > 0) recChunks.push(ev.data);
-            };
-            recInstance.onstop = async () => {
-                if (recStream) {
-                    recStream.getTracks().forEach(t => t.stop());
-                    recStream = null;
-                }
-                const blob = new Blob(recChunks, { type: recInstance.mimeType || 'audio/webm' });
-                try {
-                    const wavDataUrl = await convertBlobToWavDataUrl(blob);
-                    pendingAudioBase64 = wavDataUrl;
-                    pendingAudioFormat = 'wav';
-                    if (typeof updateAttachPreviewUI === 'function') updateAttachPreviewUI();
-                    const secs = estimateWavSeconds(wavDataUrl);
-                    if (sub) sub.innerText = `🎙️ WAV 语音已就绪（${secs || 1}"），点发送传给 TA`;
-                } catch (convErr) {
-                    console.warn('WAV 转码失败，回退原始格式:', convErr);
+            if (!blob.size) throw Error('录音为空，请重新录制');
+            if (blob.size > 16*1024*1024) throw Error('语音文件过大，请剪短后再发送');
+            status('正在准备语音…');
+            let data, format;
+            try {
+                data = await convertBlobToWavDataUrl(blob);
+                format = 'wav';
+            } catch {
+                const ext = (blob.name || '').split('.').pop().toLowerCase();
+                const mime = blob.type.split(';')[0].toLowerCase();
+                const types = {'audio/mp4':'m4a','audio/x-m4a':'m4a','audio/aac':'aac','audio/mpeg':'mp3','audio/mp3':'mp3','audio/wav':'wav','audio/x-wav':'wav','audio/ogg':'ogg','audio/webm':'webm'};
+                format = types[mime] || (Object.values(types).includes(ext) ? ext : '');
+                if (!format) throw Error('无法读取这段音频，请选择 M4A、WAV 或 MP3');
+                const normalized = blob.slice(0,blob.size,Object.keys(types).find(k=>types[k]===format));
+                data = await new Promise((resolve,reject)=>{
                     const reader = new FileReader();
-                    reader.onloadend = () => {
-                        pendingAudioBase64 = reader.result;
-                        pendingAudioFormat = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
-                        if (typeof updateAttachPreviewUI === 'function') updateAttachPreviewUI();
-                        if (sub) sub.innerText = '🎙️ 语音已就绪，点发送传给 TA';
-                    };
-                    reader.readAsDataURL(blob);
-                }
-            };
-
-            recInstance.start();
-            recActive = true;
-            if (btn) { btn.classList.add('recording'); btn.innerText = '⏹️'; }
-            if (sub) sub.innerText = '🔴 正在录音中... 再点麦克风完成';
+                    reader.onload = ()=>resolve(reader.result);
+                    reader.onerror = ()=>reject(Error('文件读取失败'));
+                    reader.readAsDataURL(normalized);
+                });
+            }
+            if (!current(t)) return;
+            if (data.length > 22*1024*1024) throw Error('语音太长，请剪短后再发送');
+            pendingAudioBase64 = data;
+            pendingAudioFormat = format;
+            updateAttachPreviewUI();
+            status('语音已就绪，可试听后发送');
         } catch (err) {
-            alert('无法启动麦克风：' + err.message);
+            if (current(t)) status(err.message || '读取语音失败，请重试');
+        } finally {
+            if (take === t) take = null;
         }
+    }
+    picker.onchange = () => {
+        const file = picker.files[0];
+        if (take && file) attach(take,file);
     };
+    window.toggleVoiceRecording = async function () {
+        if (take?.recorder?.state === 'recording') {
+            take.recorder.stop();
+            refreshButton();
+            return;
+        }
+        if (take?.starting) return;
+        cancelVoice();
+        const t = {owner:chatKey()};
+        take = t;
+        if (fileMode) {
+            picker.value = '';
+            status('选择录好的音频；iPhone 可从「文件」选取语音备忘录');
+            picker.click();
+            return;
+        }
+        t.starting = true;
+        try {
+            t.stream = await navigator.mediaDevices.getUserMedia({audio:true});
+            if (!current(t)) { release(t); return; }
+            const mime = ['audio/mp4','audio/webm;codecs=opus','audio/webm','audio/ogg'].find(type=>MediaRecorder.isTypeSupported?.(type));
+            const recorder = mime ? new MediaRecorder(t.stream,{mimeType:mime}) : new MediaRecorder(t.stream);
+            const chunks = [];
+            t.recorder = recorder;
+            recorder.ondataavailable = e=>{ if(e.data.size) chunks.push(e.data); };
+            recorder.onerror = () => {
+                if (current(t)) { cancelVoice(); status('录音中断，请重试'); }
+                release(t);
+            };
+            recorder.onstop = () => {
+                release(t);
+                if (!current(t)) return;
+                refreshButton();
+                attach(t,new Blob(chunks,{type:recorder.mimeType || chunks[0]?.type}));
+            };
+            recorder.start();
+            voiceButton.classList.add('recording');
+            voiceButton.textContent = '⏹️';
+            status('正在录音，再点一次完成');
+        } catch (err) {
+            release(t);
+            if (current(t)) {
+                take = null;
+                fileMode = true;
+                refreshButton();
+                status('麦克风不可用，点 🎵 可发送已有录音；允许麦克风后刷新可重试');
+            }
+        } finally { t.starting = false; }
+    };
+    refreshButton();
 
     // 5. 升级聊天气泡渲染：用户发出的语音 & 角色发出的语音统一渲染成微信风动态声波条！
     const origRenderBubbleInnerHtml = window.renderBubbleInnerHtml;
@@ -629,6 +674,7 @@
     }
 
     window.VoiceUI = {
+        cancelVoice,
         toggleEye,
         syncCharVoiceToggle,
         syncVoicePromptBadge,

@@ -169,9 +169,10 @@
         try {
             const res = await fetch(`${API_BASE}/api/users`);
             const data = await res.json();
-            savedUserCards = (res.ok && data.success) ? (data.data || []) : [];
+            if (!res.ok || !data.success) throw Error('读取用户卡失败');
+            savedUserCards = data.data || [];
             renderUserCardChips();
-        } catch {}
+        } catch (error) { savedUserCards = []; renderUserCardChips(); throw error; }
     }
 
     function renderUserCardChips() {
@@ -195,10 +196,43 @@
         }).join('');
     }
 
+    let scopeFriends = [];
+    let scopeReady = false;
+    function showScope(owners = []) {
+        const targeted = owners.some(Boolean);
+        document.querySelector('#userScopeBox input[value="' + (targeted?'selected':'global') + '"]').checked = true;
+        const list = document.getElementById('userScopeFriends');
+        list.textContent = '';
+        list.hidden = !targeted;
+        const counts = new Map();
+        for (const f of scopeFriends) counts.set(f.name,(counts.get(f.name)||0)+1);
+        const choices = [...scopeFriends];
+        for (const key of owners.filter(Boolean)) {
+            if (!choices.some(f=>f.key===key)) choices.push({key,name:'已移除的联系人'});
+        }
+        for (const f of choices) {
+            const label = document.createElement('label');
+            const input = document.createElement('input');
+            input.type = 'checkbox'; input.value = f.key; input.checked = owners.includes(f.key);
+            label.append(input,counts.get(f.name)>1 || f.name==='已移除的联系人' ? f.name+' · '+f.key : f.name);
+            list.append(label);
+        }
+    }
+    document.getElementById('userScopeBox').onchange = () => {
+        document.getElementById('userScopeFriends').hidden = document.querySelector('#userScopeBox input[value="global"]').checked;
+    };
+    function scopeSelection() {
+        if (!scopeReady) throw Error('角色列表尚未载入，请重新打开用户卡');
+        if (document.querySelector('#userScopeBox input[value="global"]').checked) return [''];
+        const owners = Array.from(document.querySelectorAll('#userScopeFriends input:checked'), el=>el.value);
+        if (!owners.length) throw Error('请勾选至少一位角色');
+        return owners;
+    }
     function applyUserCard(id) {
         const u = savedUserCards.find(x => x.id === id);
         if (!u) return;
         draftActiveUserId = u.id;
+        showScope(u.owners);
         document.getElementById('cfgUserName').value = u.user_name || '';
         document.getElementById('cfgUserRelation').value = u.user_relation || '';
         document.getElementById('cfgCharCallUser').value = u.char_call_user || '';
@@ -238,12 +272,13 @@
         try {
             const res = await fetch(`${API_BASE}/api/users`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({...payload,owners:scopeSelection()})
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.message || '保存失败');
             draftActiveUserId = data.card.id;
             await loadUserCards();
+            await loadConfig(); await loadChatHistory();
             if (fb) { fb.style.color = '#4ade80'; fb.innerText = `✅ 用户人设卡【${payload.user_name}】已存入 data/users/users.db！`; }
         } catch (e) {
             if (fb) { fb.style.color = '#f87171'; fb.innerText = `❌ ${e.message}`; }
@@ -261,11 +296,12 @@
         try {
             const res = await fetch(`${API_BASE}/api/users/${draftActiveUserId}`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({...payload,owners:scopeSelection()})
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.message || '更新失败');
             await loadUserCards();
+            await loadConfig(); await loadChatHistory();
             if (fb) { fb.style.color = '#4ade80'; fb.innerText = `✅ 已覆盖更新用户卡【${payload.user_name}】！`; }
         } catch (e) {
             if (fb) { fb.style.color = '#f87171'; fb.innerText = `❌ ${e.message}`; }
@@ -277,6 +313,7 @@
         await fetch(`${API_BASE}/api/users/${id}`, { method: 'DELETE' });
         if (String(draftActiveUserId) === String(id)) draftActiveUserId = null;
         await loadUserCards();
+        await loadConfig(); await loadChatHistory();
     }
 
     // --- 🪪 角色卡原地更新 + 绑定预设 ---
@@ -351,21 +388,35 @@
                 draftActiveUserId = (typeof appConfig !== 'undefined' && appConfig.activeUserId) ? parseInt(appConfig.activeUserId, 10) || null : null;
                 const fb = document.getElementById('userPresetFeedback');
                 if (fb) fb.innerText = '';
-                await loadUserCards();
-            };
-        }
-        if (typeof window.saveUserPanel === 'function') {
-            const orig = window.saveUserPanel;
-            window.saveUserPanel = async function () {
+                scopeReady = false;
+                const box = document.getElementById('userScopeBox');
+                box.disabled = true;
                 try {
-                    await fetch(`${API_BASE}/api/config`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ activeUserId: draftActiveUserId ? String(draftActiveUserId) : '' })
-                    });
-                } catch {}
-                return orig.apply(this, arguments);
+                    const resp = await fetch(API_BASE+'/api/contacts');
+                    if (!resp.ok) throw Error();
+                    scopeFriends = await resp.json();
+                    await loadUserCards();
+                    showScope(savedUserCards.find(u=>u.id===draftActiveUserId)?.owners);
+                    scopeReady = true;
+                    box.disabled = false;
+                } catch { fb.innerText = '读取生效范围失败，请重新打开用户卡'; }
             };
         }
+        window.saveUserPanel = async function () {
+            const feedback = document.getElementById('userPresetFeedback');
+            try {
+                const payload = {...readUserFormPayload(), owners:scopeSelection()};
+                payload.user_name = payload.user_name || '我';
+                const url = API_BASE+'/api/users' + (draftActiveUserId ? '/'+draftActiveUserId : '');
+                const r = await fetch(url,{method:draftActiveUserId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+                const data = await r.json();
+                if (!r.ok) throw Error(data.message || '保存失败');
+                draftActiveUserId = data.card.id;
+                closeModal('userModal');
+                await loadConfig();
+                await loadChatHistory();
+            } catch(e) { feedback.innerText=e.message; feedback.style.color='#f87171'; feedback.scrollIntoView({block:'nearest'}); }
+        };
 
         // 角色卡弹窗
         if (typeof window.openCharacterModal === 'function') {
@@ -393,6 +444,11 @@
         if (typeof window.saveCharacterPanel === 'function') {
             const orig = window.saveCharacterPanel;
             window.saveCharacterPanel = async function () {
+                const nextKey = draftActiveCharKey || 'custom_' + (document.getElementById('cfgCharName').value.trim() || '连线搭子');
+                if (nextKey !== appConfig.activeCharKey && window.ChatPro?.hasPendingChat()) {
+                    showCommBanner('通讯正在发送', '本轮回复结束后即可切换角色');
+                    return;
+                }
                 const selectedProfile = document.getElementById('cfgCharPresetProfile')?.value.trim() || '';
                 let appliedName = '';
                 try {

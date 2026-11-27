@@ -628,6 +628,7 @@
     }
 
     async function sendClipToAI() {
+        const senderKey = appConfig.activeCharKey;
         if (!decodedBuffer || !clipTrack) return;
         stopPreview();
 
@@ -661,7 +662,7 @@
             closeClipModal();
 
             // 同步更新聊天框气泡（优先无缝衔接打开通讯抽屉！）
-            if (data.userMsg) {
+            if (data.userMsg && senderKey === chatKey()) {
                 if (typeof chatHistory !== 'undefined') chatHistory.push(data.userMsg);
                 if (typeof window.appendBubble === 'function') {
                     window.appendBubble('user', data.userMsg.content, false, { msgId: data.userMsg.id });
@@ -669,12 +670,12 @@
             }
 
             const drawer = document.getElementById('commDrawer');
-            if (drawer && !drawer.classList.contains('open') && typeof toggleChatDrawer === 'function') {
+            if (senderKey === chatKey() && drawer && !drawer.classList.contains('open') && typeof toggleChatDrawer === 'function') {
                 toggleChatDrawer();
             }
 
             const replies = Array.isArray(data.replyMsgs) ? data.replyMsgs : [];
-            for (const rm of replies) {
+            for (const rm of senderKey === chatKey() ? replies : []) {
                 if (typeof chatHistory !== 'undefined') chatHistory.push(rm);
                 if (typeof window.appendBubble === 'function') {
                     window.appendBubble('assistant', rm.content, false, { msgId: rm.id });

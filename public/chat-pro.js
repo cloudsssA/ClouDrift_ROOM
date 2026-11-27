@@ -41,11 +41,11 @@
     let bgAdjustMode = false;
     let activeGearTab = 'engine';
 
-    let pendingQueue = [];
-    let debounceTimer = null;
-    let debounceCountdownInterval = null;
-    let debounceDeadline = 0;
-    let isRequestInFlight = false;
+    const sessions = new Map();
+    function session(key = chatKey()) {
+        if (!sessions.has(key)) sessions.set(key, {key, pendingQueue:[], isRequestInFlight:false});
+        return sessions.get(key);
+    }
     let streamSessionId = 0;
 
     let undoRoundsDraft = 1;
@@ -75,15 +75,18 @@
 
     function loadLocalTheme() {
         try {
-            const raw = JSON.parse(localStorage.getItem(LOCAL_THEME_KEY) || 'null');
-            return raw && typeof raw === 'object' ? { ...DEFAULT_THEME, ...raw } : null;
+            const raw = JSON.parse((localStorage.getItem(LOCAL_THEME_KEY + ':' + chatKey()) || localStorage.getItem(LOCAL_THEME_KEY)) || 'null');
+            return raw && typeof raw === 'object' ? { ...DEFAULT_THEME, ...raw, ...JSON.parse(localStorage.getItem(LOCAL_THEME_KEY + ':bubbles') || '{}') } : null;
         } catch {
             return null;
         }
     }
 
     function saveLocalTheme(themeObj) {
-        try { localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify({ ...DEFAULT_THEME, ...(themeObj || {}) })); } catch {}
+        try {
+            localStorage.setItem(LOCAL_THEME_KEY + ':' + chatKey(), JSON.stringify(themeObj));
+            localStorage.setItem(LOCAL_THEME_KEY + ':bubbles', JSON.stringify({userBubbleBg:themeObj.userBubbleBg, aiBubbleBg:themeObj.aiBubbleBg}));
+        } catch { appendSysPill('本机存储空间不足，聊天背景未保存'); }
     }
 
     function upgradeContextSliderMax() {
@@ -1004,10 +1007,11 @@
     }
 
     async function loadProSettings() {
+        const owner = chatKey();
         try {
-            const res = await fetch(`${API_BASE}/api/chat/pro-settings`);
+            const res = await fetch(chatURL(`/pro-settings`));
             const data = await res.json();
-            if (res.ok && data.success) {
+            if (owner === chatKey() && res.ok && data.success) {
                 const cloudTheme = { ...DEFAULT_THEME, ...(data.chatTheme || {}) };
                 const activeTheme = localSkinOnly ? (loadLocalTheme() || cloudTheme) : cloudTheme;
                 proConfig = { ...proConfig, ...data, chatTheme: activeTheme };
@@ -1024,7 +1028,7 @@
         proConfig.chatDebounceSec = sec;
         syncSettingsUI();
         try {
-            await fetch(`${API_BASE}/api/chat/pro-settings`, {
+            await fetch(chatURL(`/pro-settings`), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chatSplitEnabled: proConfig.chatSplitEnabled,
@@ -1034,7 +1038,7 @@
                 })
             });
         } catch {}
-        if (!proConfig.chatDebounceEnabled && pendingQueue.length > 0 && !isRequestInFlight) flushNow();
+        if (!proConfig.chatDebounceEnabled && session().pendingQueue.length > 0 && !session().isRequestInFlight) flushNow();
     }
 
     function readSkinFromInputs() {
@@ -1069,7 +1073,7 @@
             return;
         }
         try {
-            await fetch(`${API_BASE}/api/chat/pro-settings`, {
+            await fetch(chatURL(`/pro-settings`), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chatTheme: proConfig.chatTheme })
             });
@@ -1089,6 +1093,7 @@
     }
 
     async function uploadSkinBg(event) {
+        const owner = chatKey();
         const file = event.target.files?.[0];
         if (!file) return;
         try {
@@ -1100,6 +1105,7 @@
                     r.onerror = reject;
                     r.readAsDataURL(file);
                 });
+            if (owner !== chatKey()) return;
             proConfig.chatTheme = { ...readSkinFromInputs(), chatBgImage: imgData, chatBgScale: 1, chatBgX: 0, chatBgY: 0 };
             syncSettingsUI();
             await saveSkin();
@@ -1243,17 +1249,19 @@
     function ctxEnterMulti() { hideCtxMenu(); enterMultiSelect(ctxTargetMsgId); }
 
     async function deleteBubblesByIds(ids, syncMemory) {
+        const owner = chatKey();
         if (!ids.length) return;
         const tip = syncMemory
             ? `确认删除选中的 ${ids.length} 条气泡，并同步更新/清理对应的聊天上下文记忆吗？`
             : `确认仅删除选中的 ${ids.length} 条气泡吗？（TA 脑内的连续记忆会保留）`;
         if (!confirm(tip)) return;
         try {
-            const res = await fetch(`${API_BASE}/api/chat/delete-bubbles`, {
+            const res = await fetch(chatURL(`/delete-bubbles`), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ids, syncMemory })
             });
             const data = await res.json();
+            if (owner !== chatKey()) return;
             if (!res.ok || !data.success) throw new Error(data.message || '删除失败');
 
             const idSet = new Set(ids.map(String));
@@ -1283,7 +1291,7 @@
     // 7. 撤回确认弹窗
     async function openUndoConfirmModal(defaultRounds = 1) {
         if (appConfig.soloMode) return;
-        if (isRequestInFlight) { appendSysPill('⏳ 请等当前回复完成后再撤回哦～'); return; }
+        if (session().isRequestInFlight) { appendSysPill('⏳ 请等当前回复完成后再撤回哦～'); return; }
         undoRoundsDraft = Math.max(1, Math.min(10, parseInt(defaultRounds, 10) || 1));
         document.getElementById('chatUndoConfirmModal')?.classList.add('open');
         await previewUndoRounds(undoRoundsDraft);
@@ -1306,7 +1314,7 @@
         if (sumEl) sumEl.innerText = '⏳ 正在预览即将撤回的聊天内容...';
 
         try {
-            const res = await fetch(`${API_BASE}/api/chat/undo-preview?rounds=${r}`);
+            const res = await fetch(chatURL(`/undo-preview?rounds=${r}`));
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.message || '预览失败');
             const previews = data.previews || [];
@@ -1318,8 +1326,8 @@
             }
             if (execBtn) execBtn.disabled = false;
             if (sumEl) sumEl.innerText = `⚠️ 即将撤回最后 ${r} 轮聊天（共 ${previews.length} 条气泡 + 对应聊天记忆）：`;
-            const uName = appConfig.userName || '我';
-            const cName = appConfig.charName || 'TA';
+            const uName = chatUserName() || '我';
+            const cName = chatName() || 'TA';
             if (listEl) {
                 listEl.innerHTML = previews.map(p => `
                     <div class="undo-preview-item">
@@ -1364,11 +1372,11 @@
         const box = document.getElementById('imMessagesList');
         if (!box) return;
         if (!list || !list.length) {
-            box.innerHTML = `<div style="text-align:center;color:#a8a29e;font-size:12px;margin-top:20px;">给正在线上连线的 ${esc(appConfig.charName || 'TA')} 发条消息、图片或语音吧～</div>`;
+            box.innerHTML = `<div style="text-align:center;color:#a8a29e;font-size:12px;margin-top:20px;">给正在线上连线的 ${esc(chatName() || 'TA')} 发条消息、图片或语音吧～</div>`;
             return;
         }
-        const cAva = renderAvatarHtml(appConfig.charAvatar, appConfig.charName || 'TA');
-        const uAva = renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我');
+        const cAva = renderAvatarHtml(chatAvatar(), chatName() || 'TA');
+        const uAva = renderAvatarHtml(chatUserAvatar(), chatUserName() || '我');
         box.innerHTML = list.map(m => {
             const idAttr = m.id ? `data-msg-id="${m.id}"` : '';
             if (m.role === 'system') {
@@ -1400,8 +1408,8 @@
         if (opts.localId) row.dataset.localId = String(opts.localId);
 
         const ava = role === 'user'
-            ? renderAvatarHtml(appConfig.userAvatar, appConfig.userName || '我')
-            : renderAvatarHtml(appConfig.charAvatar, appConfig.charName || 'TA');
+            ? renderAvatarHtml(chatUserAvatar(), chatUserName() || '我')
+            : renderAvatarHtml(chatAvatar(), chatName() || 'TA');
         const inner = isTyping ? esc(content) : window.renderBubbleInnerHtml(content);
         const queuedTag = opts.queued ? `<span class="queued-tag">⏳ 待打包</span>` : '';
 
@@ -1454,60 +1462,61 @@
     }
 
     // 9. AstrBot 防抖合并队列
-    function stopDebounceTimers() {
-        clearTimeout(debounceTimer);
-        clearInterval(debounceCountdownInterval);
-        debounceTimer = null; debounceCountdownInterval = null; debounceDeadline = 0;
+    function stopDebounceTimers(state = session()) {
+        clearTimeout(state.debounceTimer);
+        clearInterval(state.debounceCountdownInterval);
+        state.debounceTimer = null; state.debounceCountdownInterval = null; state.debounceDeadline = 0;
     }
 
-    function updateDebounceBarUI() {
+    function updateDebounceBarUI(state = session()) {
+        if (state.key !== chatKey()) return;
         const bar = document.getElementById('chatDebounceBar');
         const txt = document.getElementById('chatDebounceText');
         if (!bar || !txt) return;
-        if (!pendingQueue.length) { bar.classList.remove('show'); return; }
+        if (!state.pendingQueue.length) { bar.classList.remove('show'); return; }
         bar.classList.add('show');
-        if (isRequestInFlight) {
-            txt.innerText = `⏳ 回复后自动打包发 ${pendingQueue.length} 条新消息…`;
+        if (state.isRequestInFlight) {
+            txt.innerText = `⏳ 回复后自动打包发 ${state.pendingQueue.length} 条新消息…`;
             return;
         }
-        const remainSec = Math.max(0, Math.ceil((debounceDeadline - Date.now()) / 1000));
-        txt.innerText = `⏳ ${remainSec}s 后打包发送（${pendingQueue.length} 条）`;
+        const remainSec = Math.max(0, Math.ceil((state.debounceDeadline - Date.now()) / 1000));
+        txt.innerText = `⏳ ${remainSec}s 后打包发送（${state.pendingQueue.length} 条）`;
     }
 
-    function scheduleDebounceFlush() {
-        stopDebounceTimers();
-        if (!pendingQueue.length || isRequestInFlight) { updateDebounceBarUI(); return; }
+    function scheduleDebounceFlush(state = session()) {
+        stopDebounceTimers(state);
+        if (!state.pendingQueue.length || state.isRequestInFlight) { updateDebounceBarUI(state); return; }
         const waitMs = Math.max(1500, (proConfig.chatDebounceSec || 10) * 1000);
-        debounceDeadline = Date.now() + waitMs;
-        updateDebounceBarUI();
-        debounceCountdownInterval = setInterval(updateDebounceBarUI, 250);
-        debounceTimer = setTimeout(() => flushNow(), waitMs);
+        state.debounceDeadline = Date.now() + waitMs;
+        updateDebounceBarUI(state);
+        state.debounceCountdownInterval = setInterval(() => updateDebounceBarUI(state), 250);
+        state.debounceTimer = setTimeout(() => flushNow(state), waitMs);
     }
 
-    function cancelQueue() {
-        stopDebounceTimers();
-        pendingQueue.forEach(q => q.rowEl?.remove());
-        pendingQueue = [];
-        updateDebounceBarUI();
+    function cancelQueue(state = session()) {
+        stopDebounceTimers(state);
+        state.pendingQueue.forEach(q => q.rowEl?.remove());
+        state.pendingQueue = [];
+        updateDebounceBarUI(state);
         resetSubStatus();
         appendSysPill('🧹 已撤回未发送的待打包消息');
     }
 
-    function abortAllPendingAndStreams() {
+    function abortAllPendingAndStreams(state = session()) {
         streamSessionId++;
-        stopDebounceTimers();
-        pendingQueue = [];
-        updateDebounceBarUI();
-        isRequestInFlight = false;
+        stopDebounceTimers(state);
+        state.pendingQueue = [];
+        updateDebounceBarUI(state);
+        state.isRequestInFlight = false;
         exitMultiSelect();
         resetSubStatus();
     }
 
-    async function flushNow() {
-        if (isRequestInFlight || !pendingQueue.length) return;
-        stopDebounceTimers();
-        const batch = pendingQueue.splice(0, pendingQueue.length);
-        updateDebounceBarUI();
+    async function flushNow(state = session()) {
+        if (state.isRequestInFlight || !state.pendingQueue.length) return;
+        stopDebounceTimers(state);
+        const batch = state.pendingQueue.splice(0, state.pendingQueue.length);
+        updateDebounceBarUI(state);
 
         for (const item of batch) {
             if (item.rowEl) {
@@ -1516,13 +1525,13 @@
             }
         }
 
-        isRequestInFlight = true;
-        const myRunId = ++streamSessionId;
-        setSubStatus('⌨️ 对方正在输入...');
-        const typingRow = window.appendBubble('assistant', '• • •', true);
+        state.isRequestInFlight = true;
+        const myRunId = state.key === chatKey() ? ++streamSessionId : -1;
+        if (state.key === chatKey()) setSubStatus('⌨️ 对方正在输入...');
+        const typingRow = state.key === chatKey() ? window.appendBubble('assistant', '• • •', true) : null;
 
         try {
-            const res = await fetch(`${API_BASE}/api/chat/pro`, {
+            const res = await fetch(chatURL(`/pro`, state.key), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     items: batch.map(b => ({ content: b.text, imageData: b.imageData, audioData: b.audioData, audioFormat: b.audioFormat })),
@@ -1534,7 +1543,7 @@
             const data = await res.json();
             typingRow?.remove();
             if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
-            if (myRunId !== streamSessionId || data.staleDiscarded) return;
+            if (state.key !== chatKey() || myRunId !== streamSessionId || data.staleDiscarded) return;
 
             if (Array.isArray(data.userMsgs)) {
                 data.userMsgs.forEach((um, idx) => {
@@ -1552,11 +1561,14 @@
             typingRow?.remove();
             if (myRunId === streamSessionId) window.appendBubble('assistant', `⚠️ ${e.message}`);
         } finally {
-            isRequestInFlight = false;
-            resetSubStatus();
-            if (pendingQueue.length > 0) {
-                if (proConfig.chatDebounceEnabled) scheduleDebounceFlush();
-                else flushNow();
+            state.isRequestInFlight = false;
+            if (state.key === chatKey()) {
+                resetSubStatus();
+                if (myRunId !== streamSessionId) loadChatHistory(true);
+            }
+            if (state.pendingQueue.length > 0) {
+                if (proConfig.chatDebounceEnabled) scheduleDebounceFlush(state);
+                else flushNow(state);
             }
         }
     }
@@ -1564,16 +1576,17 @@
     // 10. /reroll & /clear(N)
     async function executeReroll() {
         if (appConfig.soloMode) return;
-        if (isRequestInFlight) { appendSysPill('⏳ 请等当前回复完成后再 /reroll 哦～'); return; }
-        if (pendingQueue.length > 0) { appendSysPill('⚠️ 当前还有未发送的防抖消息，请先点立即发或撤回后再 /reroll'); return; }
+        if (session().isRequestInFlight) { appendSysPill('⏳ 请等当前回复完成后再 /reroll 哦～'); return; }
+        if (session().pendingQueue.length > 0) { appendSysPill('⚠️ 当前还有未发送的防抖消息，请先点立即发或撤回后再 /reroll'); return; }
 
-        isRequestInFlight = true;
+        const state = session();
+        state.isRequestInFlight = true;
         const myRunId = ++streamSessionId;
         setSubStatus('🔄 正在重生成上一轮回复...');
         const typingRow = window.appendBubble('assistant', '🔄 重新组织语言中 • • •', true);
 
         try {
-            const res = await fetch(`${API_BASE}/api/chat/reroll`, {
+            const res = await fetch(chatURL(`/reroll`), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...getFocusPayload(),
@@ -1584,7 +1597,7 @@
             const data = await res.json();
             typingRow?.remove();
             if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
-            if (myRunId !== streamSessionId) return;
+            if (state.key !== chatKey() || myRunId !== streamSessionId) return;
 
             const removedSet = new Set((data.removedChatIds || []).map(String));
             if (removedSet.size > 0) {
@@ -1605,29 +1618,35 @@
             }
         } catch (e) {
             typingRow?.remove();
-            appendSysPill(`⚠️ /reroll 失败：${e.message}`);
+            if (state.key === chatKey()) appendSysPill(`⚠️ /reroll 失败：${e.message}`);
         } finally {
-            isRequestInFlight = false;
-            resetSubStatus();
+            state.isRequestInFlight = false;
+            if (state.key === chatKey()) {
+                resetSubStatus();
+                if (myRunId !== streamSessionId) loadChatHistory(true);
+            }
+            if (state.pendingQueue.length) scheduleDebounceFlush(state);
         }
     }
 
     async function executeUndoRounds(rounds = 1) {
+        const owner = chatKey();
         if (appConfig.soloMode) return;
-        if (isRequestInFlight) { appendSysPill('⏳ 请等当前回复完成后再撤回哦～'); return; }
-        if (pendingQueue.length > 0) {
+        if (session().isRequestInFlight) { appendSysPill('⏳ 请等当前回复完成后再撤回哦～'); return; }
+        if (session().pendingQueue.length > 0) {
             stopDebounceTimers();
-            pendingQueue.forEach(q => q.rowEl?.remove());
-            pendingQueue = [];
+            session().pendingQueue.forEach(q => q.rowEl?.remove());
+            session().pendingQueue = [];
             updateDebounceBarUI();
         }
 
         try {
-            const res = await fetch(`${API_BASE}/api/chat/undo`, {
+            const res = await fetch(chatURL(`/undo`), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ rounds })
             });
             const data = await res.json();
+            if (owner !== chatKey()) return;
             if (!res.ok || !data.success) throw new Error(data.message || `HTTP ${res.status}`);
 
             const removedSet = new Set((data.removedChatIds || []).map(String));
@@ -1684,16 +1703,17 @@
             ? JSON.stringify({ __mm: 1, text, imageData: imgToSend, audioData: audToSend })
             : text;
 
-        const needQueue = proConfig.chatDebounceEnabled || isRequestInFlight;
+        const needQueue = proConfig.chatDebounceEnabled || session().isRequestInFlight;
         const rowEl = window.appendBubble('user', localPreviewContent, false, {
             queued: needQueue,
             localId: `q_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
         });
 
-        pendingQueue.push({ text, imageData: imgToSend, audioData: audToSend, audioFormat: audFmt, rowEl });
+        historyVersion++;
+        session().pendingQueue.push({ text, imageData: imgToSend, audioData: audToSend, audioFormat: audFmt, rowEl });
 
         if (proConfig.chatDebounceEnabled) scheduleDebounceFlush();
-        else if (!isRequestInFlight) flushNow();
+        else if (!session().isRequestInFlight) flushNow();
         else updateDebounceBarUI();
         input.focus();
     };
@@ -1702,16 +1722,21 @@
         if (typeof window.loadChatHistory === 'function') {
             const origLoad = window.loadChatHistory;
             window.loadChatHistory = async function () {
-                if (isRequestInFlight) return;
-                abortAllPendingAndStreams();
-                return origLoad.apply(this, arguments);
+                if (arguments[0] !== true && (session().isRequestInFlight || session().pendingQueue.length)) return;
+                const owner = chatKey();
+                await origLoad.apply(this, arguments);
+                if (owner === chatKey()) {
+                    for (const item of session().pendingQueue) {
+                        if (!item.rowEl.isConnected) document.getElementById('imMessagesList').append(item.rowEl);
+                    }
+                }
             };
         }
         for (const fnName of ['clearAllMemory', 'executeClearChat']) {
             if (typeof window[fnName] === 'function') {
                 const orig = window[fnName];
                 window[fnName] = async function () {
-                    abortAllPendingAndStreams();
+                    if (fnName !== 'clearAllMemory' || chatKey() === appConfig.activeCharKey) abortAllPendingAndStreams();
                     return orig.apply(this, arguments);
                 };
             }
@@ -1719,6 +1744,19 @@
     }
 
     window.ChatPro = {
+        switchView() {
+            streamSessionId++;
+            hideCtxMenu();
+            exitMultiSelect();
+            closeGearPopover();
+            if (bgAdjustMode) setBgAdjustMode(false);
+        },
+        async refreshView() {
+            updateDebounceBarUI();
+            resetSubStatus();
+            await loadProSettings();
+        },
+        hasPendingChat: () => session().isRequestInFlight || session().pendingQueue.length > 0,
         closeGear: closeGearPopover,
         switchGearTab,
         toggleAdjustMode: toggleAdjustModeFromWidget,

@@ -632,13 +632,13 @@
 
     // 4. 接管清空记忆与通讯重置（同步清便签墙 + 相框公开状态 + 播报真实清理条数）
     window.clearAllMemory = async function () {
+        const owner = appConfig.activeCharKey;
         const name = (typeof appConfig !== 'undefined' && appConfig.charName) || 'TA';
         if (!confirm(`确定要彻底清空【${name}】的专属记忆、通讯记录与书桌便利贴吗？\n（其他角色卡不受影响；桌面相框将暂设为“仅自己看”防穿帮，但保留识图缓存）`)) return;
         try {
             const res = await fetch(`${API_BASE}/api/memory?clearChat=true&clearNotes=true&hideWidgets=true`, { method: 'DELETE' });
             const data = await res.json();
-            if (typeof chatHistory !== 'undefined') chatHistory.length = 0;
-            if (typeof renderChatMessages === 'function') renderChatMessages([]);
+            if (chatKey() === owner) { chatHistory.length = 0; renderChatMessages([]); }
             if (typeof appConfig !== 'undefined') appConfig.memoryCount = 0;
             const lbl = document.getElementById('memoryCountLabel');
             if (lbl) lbl.innerText = `【${name}】独立记忆 · 已存 0 条`;
@@ -658,13 +658,13 @@
 
     window.executeClearChat = async function (syncAll) {
         if (typeof closeModal === 'function') closeModal('clearChatModal');
-        const name = (typeof appConfig !== 'undefined' && appConfig.charName) || 'TA';
+        const owner = chatKey();
+        const name = chatName();
         try {
-            const res = await fetch(`${API_BASE}/api/chat?syncMemory=${syncAll ? 'true' : 'false'}`, { method: 'DELETE' });
+            const res = await fetch(chatURL('?syncMemory=' + syncAll), { method: 'DELETE' });
             const data = await res.json();
-            if (typeof chatHistory !== 'undefined') chatHistory.length = 0;
-            if (typeof renderChatMessages === 'function') renderChatMessages([]);
-            if (syncAll) {
+            if (chatKey() === owner) { chatHistory.length = 0; renderChatMessages([]); }
+            if (syncAll && owner === appConfig.activeCharKey) {
                 if (typeof appConfig !== 'undefined') appConfig.memoryCount = 0;
                 const lbl = document.getElementById('memoryCountLabel');
                 if (lbl) lbl.innerText = `【${name}】独立记忆 · 已存 0 条`;
